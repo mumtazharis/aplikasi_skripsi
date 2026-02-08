@@ -1,126 +1,44 @@
-from PySide6.QtWidgets import (
-    QWidget, QLabel, QVBoxLayout, QHBoxLayout, QFrame, QPushButton, QComboBox,  QSizePolicy
-)
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QImage, QPixmap
 import cv2
+from PySide6.QtWidgets import QWidget, QHBoxLayout
+from PySide6.QtGui import QImage
 
 from camera_worker import CameraWorker
+from components.camera_view import CameraView
+from components.sidebar import Sidebar
 
 class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Live Camera + Sidebar")
+        self.setWindowTitle("Camera")
         self.resize(1000, 600)
 
         self.camera_on = True
-        self.current_pixmap = None
+        self.camera_thread = None
+        self.flip_horizontal = False
 
-        # ===== Kamera View =====
-        self.camera_label = QLabel()
-        self.camera_label.setAlignment(Qt.AlignCenter)
-        self.camera_label.setStyleSheet("background-color: black;")
-        self.camera_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
-        self.camera_label.setMinimumSize(600, 450)
-
-        # ===== Sidebar =====
-        sidebar = QFrame()
-        sidebar.setMinimumWidth(200)
-        sidebar.setMaximumWidth(300)
-        sidebar.setStyleSheet("""
-            QFrame {
-                background-color: #2b2b2b;
-            }
-            QLabel {
-                color: white;
-            }
-        """)
-
-        sidebar_layout = QVBoxLayout(sidebar)
-
-        self.camera_toggle_btn = QPushButton("Stop Camera")
-        self.camera_toggle_btn.clicked.connect(self.toggle_camera)
-        sidebar_layout.addWidget(self.camera_toggle_btn)
-
-        sidebar_layout.addWidget(QLabel("📷 Camera Info"))
-        sidebar_layout.addWidget(QLabel("Resolution: -"))
-        sidebar_layout.addWidget(QLabel("FPS: -"))
-
-        # Label
-        camera_label = QLabel("Camera Device")
-        sidebar_layout.addWidget(camera_label)
-
-        # Dropdown
-       
-        self.camera_selector = QComboBox()
-        sidebar_layout.addWidget(self.camera_selector)
+        # Cek kamera yang tersedia
         self.available_cameras = self.list_cameras()
 
-        for idx in self.available_cameras:
-            self.camera_selector.addItem(f"Camera {idx}", idx)
+        # Inisialisasi Komponen UI
+        self.camera_view = CameraView()
+        self.sidebar = Sidebar(self.available_cameras)
 
-        self.camera_selector.currentIndexChanged.connect(self.change_camera)
-
-
-        # Tombol FLip
-        self.flip_horizontal = False
-        self.flip_button = QPushButton("Flip Horizontal")
-        self.flip_button.clicked.connect(self.toggle_flip)
-
-        sidebar_layout.addWidget(self.flip_button)
-        
-        sidebar_layout.addStretch()
-
-        # ===== Main Layout =====
+        # Susun Layout
         main_layout = QHBoxLayout(self)
-        main_layout.setContentsMargins(0, 0, 0, 0)  # kiri, atas, kanan, bawah
+        main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
+        main_layout.addWidget(self.camera_view, 4)
+        main_layout.addWidget(self.sidebar, 1)
 
-        main_layout.addWidget(self.camera_label, 4)
-        main_layout.addWidget(sidebar, 1)
+        # Hubungkan Sinyal Sidebar ke Logika MainWindow
+        self.sidebar.camera_changed.connect(self.change_camera)
+        self.sidebar.flip_requested.connect(self.toggle_flip)
+        self.sidebar.toggle_requested.connect(self.toggle_camera)
 
-
-        # ===== Camera Thread =====
+        # Mulai Kamera Default
         default_camera = self.available_cameras[0] if self.available_cameras else 0
+        self.start_camera_thread(default_camera)
 
-        self.camera_thread = CameraWorker(default_camera)
-        self.camera_thread.frame_ready.connect(self.update_frame)
-        self.camera_thread.start()
-
-
-
-    def update_frame(self, frame):
-        if self.flip_horizontal:
-            frame = cv2.flip(frame, 1)
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        h, w, ch = rgb.shape
-        bytes_per_line = ch * w
-
-        image = QImage(
-            rgb.data, w, h, bytes_per_line, QImage.Format_RGB888
-        )
-
-        self.current_pixmap = QPixmap.fromImage(image)
-        self.update_scaled_pixmap()
-
-    def update_scaled_pixmap(self):
-        if not self.current_pixmap:
-            return
-
-        scaled = self.current_pixmap.scaled(
-            self.camera_label.size(),
-            Qt.KeepAspectRatio,
-            Qt.SmoothTransformation
-        )
-        self.camera_label.setPixmap(scaled)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self.update_scaled_pixmap()
-
-    def toggle_flip(self):
-        self.flip_horizontal = not self.flip_horizontal
-    
     def list_cameras(self, max_tested=5):
         available = []
         for i in range(max_tested):
@@ -130,19 +48,37 @@ class MainWindow(QWidget):
                 cap.release()
         return available
 
-    def change_camera(self):
+    def start_camera_thread(self, camera_index):
+        self.camera_thread = CameraWorker(camera_index)
+        
+        # Connect signals dari CameraWorker ke UI
+        self.camera_thread.frame_ready.connect(self.process_frame)
+        self.camera_thread.camera_info.connect(self.sidebar.update_info)
+        self.camera_thread.current_fps.connect(self.sidebar.update_current_fps)
+        
+        self.camera_thread.set_flip(self.flip_horizontal)
+        self.camera_thread.start()
+
+    def process_frame(self, frame):
+        """Ubah frame OpenCV ke QImage lalu kirim ke CameraView"""
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        h, w, ch = rgb.shape
+        bytes_per_line = ch * w
+        image = QImage(rgb.data, w, h, bytes_per_line, QImage.Format_RGB888)
+        
+        self.camera_view.update_frame(image)
+
+    def toggle_flip(self):
+        self.flip_horizontal = not self.flip_horizontal
+        if self.camera_thread:
+            self.camera_thread.set_flip(self.flip_horizontal)
+
+    def change_camera(self, camera_index):
         if not self.camera_on:
             return
-        camera_index = self.camera_selector.currentData()
-
-        # Stop kamera lama
         if self.camera_thread:
             self.camera_thread.stop()
-
-        # Start kamera baru
-        self.camera_thread = CameraWorker(camera_index)
-        self.camera_thread.frame_ready.connect(self.update_frame)
-        self.camera_thread.start()
+        self.start_camera_thread(camera_index)
 
     def toggle_camera(self):
         if self.camera_on:
@@ -150,20 +86,20 @@ class MainWindow(QWidget):
             if self.camera_thread:
                 self.camera_thread.stop()
                 self.camera_thread = None
-
-            self.camera_label.clear()
-            self.camera_label.setText("Stop Camera")
-            self.camera_toggle_btn.setText("Start Camera")
+            self.camera_view.clear()
+            self.camera_view.setText("Camera Stopped")
             self.camera_on = False
-
         else:
             # Nyalakan kamera
-            camera_index = self.camera_selector.currentData()
-
-            self.camera_thread = CameraWorker(camera_index)
-            self.camera_thread.frame_ready.connect(self.update_frame)
-            self.camera_thread.start()
-
-            self.camera_toggle_btn.setText("Stop Camera")
+            # Ambil index kamera dari UI sidebar secara langsung atau simpan state-nya
+            camera_index = self.sidebar.camera_selector.currentData()
+            self.start_camera_thread(camera_index)
             self.camera_on = True
 
+        # Update teks tombol di sidebar
+        self.sidebar.set_toggle_button_state(self.camera_on)
+
+    def closeEvent(self, event):
+        if self.camera_thread is not None:
+            self.camera_thread.stop()
+        event.accept()
