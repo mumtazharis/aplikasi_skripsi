@@ -1,9 +1,10 @@
 import cv2
-from PySide6.QtWidgets import QWidget, QHBoxLayout
+from PySide6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout
 from PySide6.QtGui import QImage
 
 from camera_worker import CameraWorker
 from components.camera_view import CameraView
+from components.footer import PredictionFooter
 from components.sidebar import Sidebar
 
 class MainWindow(QWidget):
@@ -22,13 +23,24 @@ class MainWindow(QWidget):
         # Inisialisasi Komponen UI
         self.camera_view = CameraView()
         self.sidebar = Sidebar(self.available_cameras)
+        self.footer = PredictionFooter()
+        # --- Susun Layout ---
+        
+        # 1. Container Kiri (Kamera + Footer)
+        left_layout = QVBoxLayout()
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(0)
+        left_layout.addWidget(self.camera_view, 1) # Stretch factor 1 (mengisi sisa ruang)
+        left_layout.addWidget(self.footer, 0)      # Stretch factor 0 (tinggi tetap sesuai fixedHeight)
 
-        # Susun Layout
+        # 2. Layout Utama (Container Kiri + Sidebar Kanan)
         main_layout = QHBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
-        main_layout.addWidget(self.camera_view, 4)
-        main_layout.addWidget(self.sidebar, 1)
+        
+        # Tambahkan layout kiri ke layout utama
+        main_layout.addLayout(left_layout, 4) # Kiri ambil 80% lebar
+        main_layout.addWidget(self.sidebar, 1) # Kanan ambil 20% lebar
 
         # Hubungkan Sinyal Sidebar ke Logika MainWindow
         self.sidebar.camera_changed.connect(self.change_camera)
@@ -57,14 +69,15 @@ class MainWindow(QWidget):
         self.camera_thread.current_fps.connect(self.sidebar.update_current_fps)
         
         self.camera_thread.set_flip(self.flip_horizontal)
+
+        self.camera_thread.prediction_result.connect(self.footer.update_prediction)
         self.camera_thread.start()
 
     def process_frame(self, frame):
         """Ubah frame OpenCV ke QImage lalu kirim ke CameraView"""
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        h, w, ch = rgb.shape
+        h, w, ch = frame.shape
         bytes_per_line = ch * w
-        image = QImage(rgb.data, w, h, bytes_per_line, QImage.Format_RGB888)
+        image = QImage(frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
         
         self.camera_view.update_frame(image)
 

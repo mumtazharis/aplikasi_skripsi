@@ -5,9 +5,14 @@ import numpy as np
 import mediapipe as mp
 from PySide6.QtCore import QThread, Signal
 
+from ml.first_preprocessing import FirstPreprocessing
+from ml.macro_predictor import MacroExpressionPredictor
+
 class CameraWorker(QThread):
-    frame_ready = Signal(np.ndarray)
-    frame_ml = Signal(np.ndarray)
+    frame_ready = Signal(np.ndarray) # Frame UI
+    frame_ml = Signal(np.ndarray)    # Frame ML (224x224)
+    prediction_result = Signal(str, float) # (Label, Confidence)
+
     camera_info = Signal(int, int, float)
     current_fps = Signal(float)
 
@@ -17,32 +22,41 @@ class CameraWorker(QThread):
         self.running = True
         self.flip_horizontal = False
 
+        # Init MediaPipe untuk UI (Deteksi Cepat Awal)
         self.mp_face_mesh = mp.solutions.face_mesh
         self.face_mesh = self.mp_face_mesh.FaceMesh(
-            static_image_mode=False,
-            max_num_faces=1,           
-            refine_landmarks=True,     
-            min_detection_confidence=0.6,
-            min_tracking_confidence=0.6
+            static_image_mode=False,       
+            max_num_faces=1,
+            refine_landmarks=True,
+            min_detection_confidence=0.5,
+            min_tracking_confidence=0.5
         )
 
+        # Init Preprocessor
+        self.preprocessor = FirstPreprocessing()
+        # self.predictor = MacroExpressionPredictor("models/macro_expression.onnx")
+        self.predictor = MacroExpressionPredictor("models/macro_expression.onnx")
+        self.inference_interval = 0.2  # 0.2 detik = 5 FPS inference
+        self.last_inference_time = 0
+
+    
     def set_flip(self, value: bool):
         self.flip_horizontal = value
 
     def run(self):
         cap = cv2.VideoCapture(self.camera_index)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1) # Low latency
 
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         fps_setting = cap.get(cv2.CAP_PROP_FPS)
 
-        # Kirim sekali ke UI
         self.camera_info.emit(width, height, fps_setting)
 
-        # FPS
+        # FPS Variables
         prev_time = time.time()
         fps_buffer = deque(maxlen=20)
-        fps_update_interval = 0.5       
+        fps_update_interval = 0.5
         last_fps_emit = time.time()
 
         while self.running:
@@ -53,54 +67,52 @@ class CameraWorker(QThread):
             if self.flip_horizontal:
                 frame = cv2.flip(frame, 1)
 
-            frame_base = frame.copy()
-            frame_ui = frame.copy()   # untuk digambar
-            frame_ml = frame.copy()   # untuk ML (BERSIH)
+            h, w, _ = frame.shape
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            
+            # 1. Deteksi Awal (Untuk UI & Referensi Sudut)
+            results_original = self.face_mesh.process(frame_rgb)
+            
+            frame_ui = frame_rgb.copy()
+            face_ml_processed = None
 
-            h, w, _ = frame_base.shape
+            if results_original.multi_face_landmarks:
+                # Ambil landmark pertama
+                face_landmarks = results_original.multi_face_landmarks[0]
 
-            # MediaPipe pakai RGB
-            rgb = cv2.cvtColor(frame_base, cv2.COLOR_BGR2RGB)
-            results = self.face_mesh.process(rgb)
+                # A. Gambar Box UI (Visualisasi User)
+                xs = [int(lm.x * w) for lm in face_landmarks.landmark]
+                ys = [int(lm.y * h) for lm in face_landmarks.landmark]
+                cv2.rectangle(frame_ui, (min(xs), min(ys)), (max(xs), max(ys)), (0, 255, 0), 2)
 
-            # Gambar bounding box HANYA ke frame_ui
-            if results.multi_face_landmarks:
-                for face_landmarks in results.multi_face_landmarks:
+                # B. Panggil Class Preprocessing
+                # Kita kirim frame asli BGR dan landmark hasil deteksi awal
+                try:
+                    face_ml_processed = self.preprocessor.process(frame, face_landmarks)
+                except Exception as e:
+                    print(f"Error Preprocessing: {e}")
 
-                    # Ambil semua titik landmark (x,y)
-                    xs = [int(lm.x * w) for lm in face_landmarks.landmark]
-                    ys = [int(lm.y * h) for lm in face_landmarks.landmark]
+                if face_ml_processed is not None:
+                    # face_ml_processed adalah BGR, kita ubah ke RGB untuk Model
+                    face_rgb_ml = cv2.cvtColor(face_ml_processed, cv2.COLOR_BGR2RGB)
+                    
+                    if prev_time - self.last_inference_time >= self.inference_interval:
+                        label, conf = self.predictor.predict(face_rgb_ml)
+                        self.prediction_result.emit(label, conf)
+                        self.last_inference_time = prev_time
 
-                    # Hitung bounding box dari landmark
-                    x_min, x_max = max(0, min(xs)), min(w, max(xs))
-                    y_min, y_max = max(0, min(ys)), min(h, max(ys))
-
-                    # Gambar bounding box ke UI SAJA
-                    cv2.rectangle(
-                        frame_ui,
-                        (x_min, y_min),
-                        (x_max, y_max),
-                        (0, 255, 0),
-                        2
-                    )
-
-            # FPS
+            # Hitung FPS
             now = time.time()
             dt = now - prev_time
             prev_time = now
+            if dt > 0: fps_buffer.append(1.0/dt)
 
-            if dt > 0:
-                instant_fps = 1.0 / dt
-                fps_buffer.append(instant_fps)
-
-            # Emit FPS tiap 0.5 detik (BUKAN tiap frame)
             if now - last_fps_emit >= fps_update_interval and fps_buffer:
-                avg_fps = sum(fps_buffer) / len(fps_buffer)
-                self.current_fps.emit(avg_fps)
+                self.current_fps.emit(sum(fps_buffer)/len(fps_buffer))
                 last_fps_emit = now
 
+            # Emit Signals
             self.frame_ready.emit(frame_ui)
-            self.frame_ml.emit(frame_ml)
 
             self.msleep(1)
 
