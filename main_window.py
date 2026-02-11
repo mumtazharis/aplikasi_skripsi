@@ -6,15 +6,17 @@ from camera_worker import CameraWorker
 from components.camera_view import CameraView
 from components.footer import PredictionFooter
 from components.sidebar import Sidebar
+from ml_worker import MLWorker
 
 class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Camera")
+        self.setWindowTitle("MY-APP")
         self.resize(1000, 600)
 
         self.camera_on = True
         self.camera_thread = None
+        self.ml_thread = None
         self.flip_horizontal = False
 
         # Cek kamera yang tersedia
@@ -49,7 +51,7 @@ class MainWindow(QWidget):
 
         # Mulai Kamera Default
         default_camera = self.available_cameras[0] if self.available_cameras else 0
-        self.start_camera_thread(default_camera)
+        self.start_system(default_camera)
 
     def list_cameras(self, max_tested=5):
         available = []
@@ -60,19 +62,40 @@ class MainWindow(QWidget):
                 cap.release()
         return available
 
-    def start_camera_thread(self, camera_index):
+    def start_system(self, camera_index):
+        """Memulai CameraWorker dan MLWorker secara bersamaan"""
+        # 1. Pastikan bersih dulu (stop jika ada yang jalan)
+        self.stop_system()
+
+        # 2. Inisialisasi Workers
         self.camera_thread = CameraWorker(camera_index)
+        self.ml_thread = MLWorker()
+
+        # Set flip awal
+        self.camera_thread.set_flip(self.flip_horizontal)
         
-        # Connect signals dari CameraWorker ke UI
+        # --- KONEKSI SINYAL (WIRING) ---
+
+        # A. Camera -> UI (Tampilan Video Lancar)
         self.camera_thread.frame_ready.connect(self.process_frame)
         self.camera_thread.camera_info.connect(self.sidebar.update_info)
         self.camera_thread.current_fps.connect(self.sidebar.update_current_fps)
-        
-        self.camera_thread.set_flip(self.flip_horizontal)
 
-        self.camera_thread.prediction_result.connect(self.footer.update_prediction)
+        # B. Camera -> ML (Jembatan Data Frame)
+        #    Ini yang membuat ML memproses gambar dari kamera
+        self.camera_thread.frame_for_ml.connect(self.ml_thread.update_frame)
+
+        # C. ML -> UI (Hasil Prediksi)
+        self.ml_thread.prediction_result.connect(self.footer.update_prediction)
+        self.ml_thread.prediction_speed.connect(self.sidebar.update_prediction_speed)
+        # (Opsional) Jika ingin menggambar kotak wajah dari ML
+        self.ml_thread.face_detected_rect.connect(self.camera_view.update_face_box)
+
+        # 3. Jalankan Thread
+        #    Disarankan start ML dulu agar siap menerima frame
+        self.ml_thread.start()
         self.camera_thread.start()
-
+    
     def process_frame(self, frame):
         """Ubah frame OpenCV ke QImage lalu kirim ke CameraView"""
         h, w, ch = frame.shape
@@ -87,32 +110,36 @@ class MainWindow(QWidget):
             self.camera_thread.set_flip(self.flip_horizontal)
 
     def change_camera(self, camera_index):
-        if not self.camera_on:
-            return
-        if self.camera_thread:
-            self.camera_thread.stop()
-        self.start_camera_thread(camera_index)
+        # Restart sistem dengan index baru
+        self.start_system(camera_index)
+        self.camera_on = True
+        self.sidebar.set_toggle_button_state(True)
 
     def toggle_camera(self):
         if self.camera_on:
-            # Matikan kamera
-            if self.camera_thread:
-                self.camera_thread.stop()
-                self.camera_thread = None
+            # Matikan
+            self.stop_system()
             self.camera_view.clear()
             self.camera_view.setText("Camera Stopped")
             self.camera_on = False
         else:
-            # Nyalakan kamera
-            # Ambil index kamera dari UI sidebar secara langsung atau simpan state-nya
+            # Nyalakan
             camera_index = self.sidebar.camera_selector.currentData()
-            self.start_camera_thread(camera_index)
+            self.start_system(camera_index)
             self.camera_on = True
 
-        # Update teks tombol di sidebar
         self.sidebar.set_toggle_button_state(self.camera_on)
 
-    def closeEvent(self, event):
-        if self.camera_thread is not None:
+    def stop_system(self):
+        """Menghentikan kedua worker dengan aman"""
+        if self.camera_thread:
             self.camera_thread.stop()
+            self.camera_thread = None
+        
+        if self.ml_thread:
+            self.ml_thread.stop()
+            self.ml_thread = None
+
+    def closeEvent(self, event):
+        self.stop_system()
         event.accept()

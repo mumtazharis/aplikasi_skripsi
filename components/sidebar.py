@@ -31,10 +31,12 @@ class Sidebar(QFrame):
         self.resolution_label = QLabel("Resolution: -")
         self.fps_label = QLabel("FPS: -")
         self.current_fps_label = QLabel("Current FPS: -")
+        self.prediction_speed_label = QLabel("Prediction Speed: -")
 
         info_layout.addWidget(self.resolution_label)
         info_layout.addWidget(self.fps_label)
         info_layout.addWidget(self.current_fps_label)
+        info_layout.addWidget(self.prediction_speed_label)
         layout.addLayout(info_layout)
 
         # --- Camera Device Section ---
@@ -71,6 +73,9 @@ class Sidebar(QFrame):
     def update_current_fps(self, fps):
         self.current_fps_label.setText(f"Current FPS: {fps:.1f}")
 
+    def update_prediction_speed(self, speed_ms):
+        self.prediction_speed_label.setText(f"Prediction Speed: {speed_ms:.1f} ms")
+    
     def set_toggle_button_state(self, is_camera_on):
         if is_camera_on:
             self.toggle_btn.setText("Stop Camera")
