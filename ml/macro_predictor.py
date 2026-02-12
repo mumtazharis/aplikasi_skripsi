@@ -2,13 +2,15 @@ import cv2
 import numpy as np
 import onnxruntime as ort
 
+from utils.resource_path import resource_path
+
 class MacroExpressionPredictor:
     def __init__(self, model_path="models/macro_expression.onnx"):
         providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
         # 1. Load Model ONNX
         try:
             # Load model dengan provider yang sudah diset
-            self.ort_session = ort.InferenceSession(model_path, providers=providers)
+            self.ort_session = ort.InferenceSession(resource_path(model_path), providers=providers)
             
             # --- DEBUGGING: Cek apakah GPU terbaca ---
             active_providers = self.ort_session.get_providers()

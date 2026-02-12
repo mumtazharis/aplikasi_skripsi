@@ -11,7 +11,7 @@ from ml_worker import MLWorker
 class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("MY-APP")
+        self.setWindowTitle("MY_APP")
         self.resize(1000, 600)
 
         self.camera_on = True
