@@ -4,13 +4,14 @@ import mediapipe as mp
 from ml.first_preprocessing import FirstPreprocessing
 from ml.macro_predictor import MacroExpressionPredictor
 from PySide6.QtCore import QThread, Signal, QMutex, QWaitCondition
+from collections import deque
 
 class MLWorker(QThread):
     # Hasil prediksi (Label, Confidence)
     prediction_result = Signal(str, float)
     # Signal opsional: Mengirim koordinat wajah untuk digambar di UI utama
     face_detected_rect = Signal(int, int, int, int) # x1, y1, x2, y2
-    prediction_speed = Signal(float)
+    prediction_speed = Signal(str)
 
     def __init__(self):
         super().__init__()
@@ -43,8 +44,10 @@ class MLWorker(QThread):
         preprocessor = FirstPreprocessing()
         predictor = MacroExpressionPredictor("models/macro_expression.onnx")
 
+        fps_buffer = deque(maxlen=20)
+        last_emit_time = time.time()
+
         while self.running:
-            start_time = time.perf_counter()
             self.mutex.lock()
             # Tunggu sampai ada frame baru
             if not self.new_frame_available:
@@ -60,6 +63,7 @@ class MLWorker(QThread):
             self.mutex.unlock()
 
             # --- MULAI PROSES ML ---
+            start_time = time.perf_counter()
             h, w, _ = frame_rgb.shape
             
             # Perlu frame BGR untuk preprocessor (sesuai kode lama Anda yang pakai 'frame' mentah)
@@ -91,17 +95,36 @@ class MLWorker(QThread):
                         # akan berjalan secepat mungkin secara asinkronus tanpa ganggu kamera.
                         label, conf = predictor.predict(face_rgb_ml)
 
-                        end_time = time.perf_counter() # Selesai hitung waktu
-                        # Hitung kecepatan dalam milidetik (ms)
+                        end_time = time.perf_counter()
                         speed_ms = (end_time - start_time) * 1000
+
+                        # Hitung FPS dari latency
+                        if speed_ms > 0:
+                            fps = 1000.0 / speed_ms
+                            fps_buffer.append(fps)
+
+                        now = time.time()
+
+                        # Emit hanya setiap 0.5 detik
+                        if now - last_emit_time >= 0.5 and fps_buffer:
+                            avg_fps = sum(fps_buffer) / len(fps_buffer)
+                            avg_ms = 1000.0 / avg_fps if avg_fps > 0 else 0
+
+                            speed_text = f"{avg_ms:.0f} ms ({avg_fps:.0f} FPS)"
+                            self.prediction_speed.emit(speed_text)
+
+                            last_emit_time = now
+
                         self.prediction_result.emit(label, conf)
-                        self.prediction_speed.emit(speed_ms)
+
 
                 except Exception as e:
                     print(f"Error ML: {e}")
             else:
                 # Jika tidak ada wajah, mungkin kirim signal kosong/reset
                 self.prediction_result.emit("Not Detected", 0)
+                speed_text = "-"
+                self.prediction_speed.emit(speed_text)
                 self.face_detected_rect.emit(0, 0, 0, 0)
 
     def stop(self):

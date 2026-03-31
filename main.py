@@ -13,10 +13,11 @@ app = QApplication(sys.argv)
 app.setWindowIcon(QIcon(resource_path("assets/icon.png")))
 
 window = MainWindow()
-window.showMaximized()
+
 if 'pyi_splash' in sys.modules:
         pyi_splash.close()
 
+window.showMaximized()
 
 # Memaksa window ke lapisan paling atas (di atas Explorer/Taskbar)
 window.setWindowFlags(window.windowFlags() | Qt.WindowStaysOnTopHint)

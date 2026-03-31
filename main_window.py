@@ -98,6 +98,8 @@ class MainWindow(QWidget):
     
     def process_frame(self, frame):
         """Ubah frame OpenCV ke QImage lalu kirim ke CameraView"""
+        if not self.camera_on:
+            return
         h, w, ch = frame.shape
         bytes_per_line = ch * w
         image = QImage(frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
@@ -119,12 +121,12 @@ class MainWindow(QWidget):
         if self.camera_on:
             # Matikan
             self.stop_system()
-            self.camera_view.clear()
-            self.camera_view.setText("Camera Stopped")
+            self.camera_view.show_stopped_message()
             self.camera_on = False
         else:
             # Nyalakan
             camera_index = self.sidebar.camera_selector.currentData()
+            self.camera_view.clear()
             self.start_system(camera_index)
             self.camera_on = True
 
@@ -133,10 +135,23 @@ class MainWindow(QWidget):
     def stop_system(self):
         """Menghentikan kedua worker dengan aman"""
         if self.camera_thread:
+            try:
+                self.camera_thread.frame_ready.disconnect()
+                self.camera_thread.camera_info.disconnect()
+                self.camera_thread.current_fps.disconnect()
+                self.camera_thread.frame_for_ml.disconnect()
+            except:
+                pass
             self.camera_thread.stop()
             self.camera_thread = None
-        
+
         if self.ml_thread:
+            try:
+                self.ml_thread.prediction_result.disconnect()
+                self.ml_thread.prediction_speed.disconnect()
+                self.ml_thread.face_detected_rect.disconnect()
+            except:
+                pass
             self.ml_thread.stop()
             self.ml_thread = None
 

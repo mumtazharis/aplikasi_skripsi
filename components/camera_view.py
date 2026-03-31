@@ -6,7 +6,12 @@ class CameraView(QLabel):
     def __init__(self):
         super().__init__()
         self.setAlignment(Qt.AlignCenter)
-        self.setStyleSheet("background-color: black;")
+        self.setStyleSheet("""
+            background-color: black; 
+            color: white; 
+            font-weight: bold; 
+            font-size: 24px;
+        """)
         self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
         self.setMinimumSize(600, 450)
         self.current_pixmap = None
@@ -68,4 +73,13 @@ class CameraView(QLabel):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self.update_scaled_pixmap()
+        if self.current_pixmap:
+            self.update_scaled_pixmap()
+
+    def show_stopped_message(self):
+        """Method baru untuk membersihkan gambar dan menampilkan teks"""
+        # PERBAIKAN 2: Hapus referensi gambar terakhir agar tidak muncul lagi saat resize
+        self.current_pixmap = None 
+        self.face_rect = None
+        self.clear() # Bersihkan konten sebelumnya (pixmap/text)
+        self.setText("Camera Stopped")

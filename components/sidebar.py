@@ -10,7 +10,7 @@ class Sidebar(QFrame):
 
     def __init__(self, available_cameras):
         super().__init__()
-        self.setMinimumWidth(200)
+        self.setMinimumWidth(250)
         self.setMaximumWidth(300)
         self.setStyleSheet(SIDEBAR_STYLE)
 
@@ -73,8 +73,8 @@ class Sidebar(QFrame):
     def update_current_fps(self, fps):
         self.current_fps_label.setText(f"Current FPS: {fps:.1f}")
 
-    def update_prediction_speed(self, speed_ms):
-        self.prediction_speed_label.setText(f"Prediction Speed: {speed_ms:.1f} ms")
+    def update_prediction_speed(self, speed):
+        self.prediction_speed_label.setText(f"Prediction Speed: {speed}")
     
     def set_toggle_button_state(self, is_camera_on):
         if is_camera_on:
@@ -84,3 +84,4 @@ class Sidebar(QFrame):
             self.resolution_label.setText("Resolution: -")
             self.fps_label.setText("FPS: -")
             self.current_fps_label.setText("Current FPS: -")
+            self.prediction_speed_label.setText(f"Prediction Speed: -")

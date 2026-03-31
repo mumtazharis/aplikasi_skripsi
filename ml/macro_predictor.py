@@ -29,6 +29,7 @@ class MacroExpressionPredictor:
         self.labels = [
             "Negative", "Neutral", "Positive",
         ]
+        # self.labels = ["angry", "disgust", "fear", "happy", "neutral", "sad", "surprise"]
 
     def preprocess(self, face_image):
         input_tensor = face_image.astype(np.float32)
