@@ -228,7 +228,7 @@ class DashboardPage(QWidget):
         layout.addWidget(title)
 
         # Load CSV button
-        self.btn_load_csv = QPushButton("  Load CSV File")
+        self.btn_load_csv = QPushButton("  Load File")
         self.btn_load_csv.setStyleSheet("""
             QPushButton {
                 background-color: #2d8ceb; color: white;
@@ -380,14 +380,36 @@ class DashboardPage(QWidget):
     # LOAD CSV
     # ==================
 
-    def load_csv(self, csv_path=None):
-        if csv_path is None or csv_path is False:
-            csv_path, _ = QFileDialog.getOpenFileName(
-                self, "Load Prediction CSV",
-                "results", "CSV Files (*.csv);;All Files (*)"
+    def load_csv(self, file_path=None):
+        if file_path is None or file_path is False:
+            file_path, _ = QFileDialog.getOpenFileName(
+                self, "Load Prediction Data",
+                "results", "Prediction Package (*.result);;CSV Files (*.csv);;All Files (*)"
             )
-        if not csv_path:
+        if not file_path:
             return
+
+        csv_path = file_path
+        if file_path.lower().endswith('.result') or file_path.lower().endswith('.zip'):
+            import zipfile
+            import tempfile
+            
+            extract_dir = os.path.join(tempfile.gettempdir(), "expression_analyzer", os.path.splitext(os.path.basename(file_path))[0])
+            os.makedirs(extract_dir, exist_ok=True)
+            
+            try:
+                with zipfile.ZipFile(file_path, 'r') as zipf:
+                    zipf.extractall(extract_dir)
+                    
+                csv_files = [f for f in os.listdir(extract_dir) if f.endswith('.csv')]
+                if csv_files:
+                    csv_path = os.path.join(extract_dir, csv_files[0])
+                else:
+                    self.lbl_csv_name.setText("Error: No CSV found in package")
+                    return
+            except Exception as e:
+                self.lbl_csv_name.setText(f"Error loading package: {e}")
+                return
 
         try:
             self.csv_data = load_csv_data(csv_path)
@@ -407,6 +429,9 @@ class DashboardPage(QWidget):
         source_path = meta.get("source", "—")
         is_folder = meta.get("is_folder", "False") == "True"
         fps = float(meta.get("fps", 30))
+
+        if not os.path.isabs(source_path) and source_path != "—":
+            source_path = os.path.join(os.path.dirname(csv_path), source_path)
 
         self.lbl_source_ref.setText(f"Source: {os.path.basename(source_path)}")
 

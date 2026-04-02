@@ -157,7 +157,7 @@ class PredictionWorker(QThread):
             # ============================================
             # FASE 3: MICRO SPOTTING (RAFT)
             # ============================================
-            self.status.emit(f"Fase 3/{4}: Micro Spotting via RAFT ({total_aligned - 1} pairs)...")
+            self.status.emit(f"Fase 3/{4}: Micro Spotting ({total_aligned - 1} pairs)...")
 
             def spotter_progress(current, total):
                 self.progress.emit(current, total)
@@ -254,7 +254,7 @@ class PredictionWorker(QThread):
             # ============================================
             # MERGE & WRITE CSV
             # ============================================
-            self.status.emit("Menyimpan hasil ke CSV...")
+            self.status.emit("Menyimpan hasil...")
 
             source_name = os.path.splitext(os.path.basename(self.source_path))[0]
             timestamp = time.strftime("%Y%m%d_%H%M%S")
@@ -390,14 +390,32 @@ class PredictionWorker(QThread):
 
             # Save metadata
             with open(meta_path, "w", encoding="utf-8") as f:
-                f.write(f"source={video_path}\n")
+                f.write(f"source={os.path.basename(video_path)}\n")
                 f.write(f"is_folder=False\n")
                 f.write(f"fps={fps_val}\n")
                 f.write(f"width={w}\n")
                 f.write(f"height={h}\n")
 
+            # Zip the package
+            import zipfile
+            
+            self.status.emit("Membuat paket hasil (.result)...")
+            zip_path = csv_path.replace(".csv", ".result")
+            
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                zipf.write(csv_path, arcname=os.path.basename(csv_path))
+                zipf.write(video_path, arcname=os.path.basename(video_path))
+                zipf.write(meta_path, arcname=os.path.basename(meta_path))
+            
+            try:
+                os.remove(csv_path)
+                os.remove(video_path)
+                os.remove(meta_path)
+            except Exception as e:
+                print(f"Cleanup error: {e}")
+
             self.status.emit("Prediksi selesai!")
-            self.finished.emit(csv_path)
+            self.finished.emit(zip_path)
 
         except Exception as e:
             import traceback
