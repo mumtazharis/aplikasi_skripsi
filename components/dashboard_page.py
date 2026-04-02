@@ -1,7 +1,7 @@
 import os
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QFileDialog, QSlider, QComboBox, QSizePolicy
+    QFrame, QFileDialog, QSlider, QComboBox, QSizePolicy, QScrollArea
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QImage, QPixmap, QPainter, QPen, QColor
@@ -54,7 +54,7 @@ class DashboardPage(QWidget):
         controls_bar = self._create_controls_bar()
         left_layout.addWidget(controls_bar)
 
-        # Timeline chart
+       # Timeline chart
         chart_container = QFrame()
         chart_container.setStyleSheet("background-color: #232323; border: none;")
         chart_layout = QVBoxLayout(chart_container)
@@ -73,7 +73,20 @@ class DashboardPage(QWidget):
 
         self.playback_chart = PlaybackChart()
         self.playback_chart.seek_requested.connect(self._on_chart_seek)
-        chart_layout.addWidget(self.playback_chart)
+
+        # ====== BAGIAN YANG DISESUAIKAN UNTUK SCROLL ======
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True) # Agar tinggi chart mengikuti area
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn) # Munculkan scroll bawah
+        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)  # Matikan scroll samping
+        self.scroll_area.setFrameShape(QFrame.NoFrame) # Menghilangkan border bawaan scroll area agar rapi
+        
+        # 1. Masukkan chart ke dalam scroll area
+        self.scroll_area.setWidget(self.playback_chart)
+        
+        # 2. Tambahkan scroll area ke layout (BUKAN chart-nya secara langsung)
+        chart_layout.addWidget(self.scroll_area)
+        # ===================================================
 
         left_layout.addWidget(chart_container, 1)
 
@@ -588,6 +601,7 @@ class DashboardPage(QWidget):
 
         self._update_current_prediction(frame_idx)
         self.playback_chart.set_cursor(frame_idx)
+        self.update_scroll_to_cursor()
 
         if self.csv_data and 0 <= frame_idx < len(self.csv_data):
             ts = self.csv_data[frame_idx]["timestamp_ms"]
@@ -649,6 +663,31 @@ class DashboardPage(QWidget):
             self.lbl_micro_label.setStyleSheet("font-size: 16px; font-weight: bold; color: #444;")
             self.lbl_micro_status.setText("Not detected")
             self.lbl_micro_status.setStyleSheet("font-size: 10px; color: #555;")
+    
+    def update_scroll_to_cursor(self):
+        # 1. Pastikan data ada
+        if self.playback_chart.total_frames <= 0:
+            return
+
+        if self.playback_chart.is_dragging:
+            return
+        
+        # 2. Ambil referensi scroll bar horizontal
+        scroll_bar = self.scroll_area.horizontalScrollBar()
+        
+        # 3. Hitung posisi X kursor dalam pixel
+        # Rumus: (posisi_sekarang / total_frame) * lebar_total_chart
+        chart_width = self.playback_chart.width()
+        cursor_x = (self.playback_chart.cursor_pos / self.playback_chart.total_frames) * chart_width
+
+        # 4. Hitung posisi scroll agar kursor berada di tengah
+        # Rumus: PosisiKursor - (SetengahLebarAreaTampilan)
+        viewport_width = self.scroll_area.viewport().width()
+        target_scroll = cursor_x - (viewport_width / 2)
+
+        # 5. Terapkan ke scroll bar
+        # setValue otomatis akan menangani batas minimum (0) dan maksimum
+        scroll_bar.setValue(int(target_scroll))
 
     # ==================
     # CLEANUP

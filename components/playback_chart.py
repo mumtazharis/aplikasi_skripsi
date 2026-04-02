@@ -24,6 +24,10 @@ class PlaybackChart(QWidget):
         self.cursor_pos = 0
         self.total_frames = 0
 
+        self.zoom_factor = 2.0
+        self.base_width = 800
+        self.is_dragging = False
+
     def set_data(self, prediction_data):
         self.macro_data = []
         self.micro_data = []
@@ -64,12 +68,36 @@ class PlaybackChart(QWidget):
                 micro_color = "#e74c3c"
             else:
                 micro_score = 0
-                micro_color = "#333333"
+                micro_color = "#555555"
             self.micro_data.append((micro_score, micro_color))
 
         self.total_frames = len(self.macro_data)
         self.cursor_pos = 0
+        self._update_chart_width()
+
+    def _update_chart_width(self):
+        if self.total_frames > 0:
+            # Lebar baru = total frame dikali zoom (semakin besar zoom, semakin panjang chart-nya)
+            new_width = max(self.base_width, int(self.total_frames * self.zoom_factor))
+            self.setMinimumWidth(new_width)
+            self.resize(new_width, self.height())
         self.update()
+    
+    def wheelEvent(self, event):
+        if event.modifiers() == Qt.ControlModifier:
+            # Jika menahan tombol CTRL sambil scroll
+            delta = event.angleDelta().y()
+            if delta > 0:
+                self.zoom_factor *= 1.2 # Zoom in (renggang)
+            else:
+                self.zoom_factor /= 1.2 # Zoom out (dempet)
+
+            # Batasi maksimal dan minimal zoom
+            self.zoom_factor = max(0.1, min(self.zoom_factor, 50.0))
+            self._update_chart_width()
+        else:
+            # Scroll biasa diteruskan ke QScrollArea parent
+            super().wheelEvent(event)
 
     def set_cursor(self, frame_idx):
         self.cursor_pos = frame_idx
@@ -82,17 +110,38 @@ class PlaybackChart(QWidget):
         self.cursor_pos = 0
         self.update()
 
-    def mousePressEvent(self, event):
+    def _update_seek_position(self, x_pos):
         if self.total_frames == 0:
             return
-        x = event.position().x()
+            
         w = self.width()
-        frame_idx = int((x / w) * self.total_frames)
+        # Hitung index frame berdasarkan posisi klik/drag
+        frame_idx = int((x_pos / w) * self.total_frames)
+        
+        # Pastikan index tidak keluar dari batas (0 sampai total_frames - 1)
         frame_idx = max(0, min(frame_idx, self.total_frames - 1))
-        self.cursor_pos = frame_idx
-        self.seek_requested.emit(frame_idx)
-        self.update()
+        
+        # Optimasi: Hanya update dan emit signal jika posisinya benar-benar berubah
+        if self.cursor_pos != frame_idx:
+            self.cursor_pos = frame_idx
+            self.seek_requested.emit(frame_idx)
+            self.update()
 
+    def mousePressEvent(self, event):
+        # Hanya respon klik kiri
+        if event.button() == Qt.LeftButton:
+            self.is_dragging = True
+            self._update_seek_position(event.position().x())
+
+    def mouseMoveEvent(self, event):
+        # Hanya respon saat mouse digeser DAN klik kiri sedang ditahan
+        if event.buttons() & Qt.LeftButton:
+            self._update_seek_position(event.position().x())
+   
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.is_dragging = False
+   
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
@@ -221,9 +270,6 @@ class PlaybackChart(QWidget):
                 y_val = get_y(avg_score)
                 col = QColor(last_color)
 
-                if last_color == "#333333" and abs(avg_score) < 0.01:
-                    continue
-
                 fill_col = QColor(col)
                 fill_col.setAlpha(30)
                 painter.setPen(Qt.NoPen)
@@ -236,10 +282,6 @@ class PlaybackChart(QWidget):
             for i in range(total - 1):
                 val1, col1 = data[i]
                 val2, col_hex = data[i + 1]
-
-                if col1 == "#333333" and col_hex == "#333333":
-                    if abs(val1) < 0.01 and abs(val2) < 0.01:
-                        continue
 
                 x1 = i * step_x
                 y1 = get_y(val1)
