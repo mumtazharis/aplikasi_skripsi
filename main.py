@@ -1,9 +1,19 @@
 import sys
+import os
 from PySide6.QtWidgets import QApplication
 from main_window import MainWindow
 from PySide6.QtGui import QIcon
 from PySide6.QtCore import Qt
 from utils.resource_path import resource_path
+
+# Fix missing mediapipe models path bug for PyInstaller
+if getattr(sys, 'frozen', False):
+    try:
+        mp_path = os.path.join(sys._MEIPASS, 'mediapipe', 'modules')
+        if os.path.exists(mp_path):
+            os.environ['MEDIAPIPE_RESOURCE_DIR'] = mp_path
+    except:
+        pass
 try:
     import pyi_splash
 except ImportError:

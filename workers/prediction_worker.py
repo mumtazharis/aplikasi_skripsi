@@ -451,7 +451,13 @@ class PredictionWorker(QThread):
 
         except Exception as e:
             import traceback
-            traceback.print_exc()
+            trace_str = traceback.format_exc()
+            try:
+                with open("DEBUG_ERROR_LOG.txt", "w") as f:
+                    f.write(trace_str)
+            except:
+                pass
+            print(trace_str)
             self.error.emit(str(e))
 
     # ==========================================

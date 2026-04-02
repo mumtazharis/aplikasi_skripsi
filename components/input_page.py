@@ -10,6 +10,7 @@ import time
 
 from components.record_dialog import RecordDialog
 from workers.prediction_worker import PredictionWorker
+from utils.resource_path import resource_path
 
 
 class InputPage(QWidget):
@@ -69,7 +70,7 @@ class InputPage(QWidget):
         layout.setAlignment(Qt.AlignCenter)
 
         icon_label = QLabel()
-        icon_label.setPixmap(QIcon("assets/play_dark.svg").pixmap(48, 48))
+        icon_label.setPixmap(QIcon(resource_path("assets/play_dark.svg")).pixmap(48, 48))
         icon_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(icon_label)
 
