@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (
     QFrame, QFileDialog, QSlider, QComboBox, QSizePolicy, QScrollArea
 )
 from PySide6.QtCore import Qt, Signal, QSettings
-from PySide6.QtGui import QImage, QPixmap, QPainter, QPen, QColor
+from PySide6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QIcon
 import cv2
 
 from components.roi_linechart import RoiLineChartWidget
@@ -111,7 +111,8 @@ class DashboardPage(QWidget):
         layout.setSpacing(8)
 
         # Play/Pause
-        self.btn_play = QPushButton("▶")
+        self.btn_play = QPushButton()
+        self.btn_play.setIcon(QIcon("assets/play.svg"))
         self.btn_play.setFixedSize(32, 32)
         self.btn_play.setStyleSheet("""
             QPushButton {
@@ -127,7 +128,8 @@ class DashboardPage(QWidget):
         layout.addWidget(self.btn_play)
 
         # Stop
-        self.btn_stop = QPushButton("■")
+        self.btn_stop = QPushButton()
+        self.btn_stop.setIcon(QIcon("assets/stop.svg"))
         self.btn_stop.setFixedSize(32, 32)
         self.btn_stop.setStyleSheet("""
             QPushButton {
@@ -583,11 +585,11 @@ class DashboardPage(QWidget):
 
         if self.is_playing:
             self.playback_worker.pause()
-            self.btn_play.setText("▶")
+            self.btn_play.setIcon(QIcon("assets/play.svg"))
             self.is_playing = False
         else:
             self.playback_worker.play()
-            self.btn_play.setText("⏸")
+            self.btn_play.setIcon(QIcon("assets/pause.svg"))
             self.is_playing = True
 
     def stop_playback(self):
@@ -595,7 +597,7 @@ class DashboardPage(QWidget):
             self.playback_worker.pause()
             self.playback_worker.seek(0)
 
-        self.btn_play.setText("▶")
+        self.btn_play.setIcon(QIcon("assets/play.svg"))
         self.is_playing = False
         self.seek_slider.setValue(0)
 
@@ -647,7 +649,7 @@ class DashboardPage(QWidget):
             self.lbl_time.setText(f"{mins}:{secs:02d}")
 
     def _on_playback_finished(self):
-        self.btn_play.setText("▶")
+        self.btn_play.setIcon(QIcon("assets/play.svg"))
         self.is_playing = False
 
     def _update_current_prediction(self, frame_idx):

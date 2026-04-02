@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (
     QFrame, QFileDialog, QProgressBar, QStackedWidget, QSizePolicy
 )
 from PySide6.QtCore import Signal, Qt, QTimer, QSettings
-from PySide6.QtGui import QPixmap, QImage
+from PySide6.QtGui import QPixmap, QImage, QIcon
 import cv2
 import time
 
@@ -68,8 +68,8 @@ class InputPage(QWidget):
         layout = QVBoxLayout(page)
         layout.setAlignment(Qt.AlignCenter)
 
-        icon_label = QLabel("▶")
-        icon_label.setStyleSheet("font-size: 48px; color: #3a3a3a;")
+        icon_label = QLabel()
+        icon_label.setPixmap(QIcon("assets/play_dark.svg").pixmap(48, 48))
         icon_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(icon_label)
 
