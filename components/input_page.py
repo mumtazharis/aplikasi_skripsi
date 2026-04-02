@@ -3,7 +3,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QFileDialog, QProgressBar, QStackedWidget, QSizePolicy
 )
-from PySide6.QtCore import Signal, Qt, QTimer
+from PySide6.QtCore import Signal, Qt, QTimer, QSettings
 from PySide6.QtGui import QPixmap, QImage
 import cv2
 import time
@@ -303,18 +303,26 @@ class InputPage(QWidget):
             self.left_stack.setCurrentIndex(0)
 
     def import_video(self):
+        settings = QSettings("AplikasiSkripsi", "MicroExpression")
+        last_dir = settings.value("last_input_dir", "")
+        
         path, _ = QFileDialog.getOpenFileName(
             self, "Import Video",
-            "", "Video Files (*.avi *.mp4 *.mkv *.mov *.wmv);;All Files (*)"
+            last_dir, "Video Files (*.avi *.mp4 *.mkv *.mov *.wmv);;All Files (*)"
         )
         if path:
+            settings.setValue("last_input_dir", os.path.dirname(path))
             self.set_source(path, "video")
 
     def import_folder(self):
+        settings = QSettings("AplikasiSkripsi", "MicroExpression")
+        last_dir = settings.value("last_input_dir", "")
+        
         path = QFileDialog.getExistingDirectory(
-            self, "Import Frame Folder", ""
+            self, "Import Frame Folder", last_dir
         )
         if path:
+            settings.setValue("last_input_dir", path)
             self.set_source(path, "folder")
 
     def set_source(self, path, source_type):
@@ -400,12 +408,17 @@ class InputPage(QWidget):
         if not self.source_path:
             return
 
+        settings = QSettings("AplikasiSkripsi", "MicroExpression")
+        last_out_dir = settings.value("last_output_dir", "")
+
         output_dir = QFileDialog.getExistingDirectory(
-            self, "Select Output Directory", ""
+            self, "Select Output Directory", last_out_dir
         )
         
         if not output_dir:
             return
+            
+        settings.setValue("last_output_dir", output_dir)
 
         self.btn_start_predict.setEnabled(False)
         self.btn_stop_predict.setVisible(True)

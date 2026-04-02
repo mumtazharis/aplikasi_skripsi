@@ -3,7 +3,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QFileDialog, QSlider, QComboBox, QSizePolicy, QScrollArea
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QSettings
 from PySide6.QtGui import QImage, QPixmap, QPainter, QPen, QColor
 import cv2
 
@@ -420,10 +420,17 @@ class DashboardPage(QWidget):
 
     def load_csv(self, file_path=None):
         if file_path is None or file_path is False:
+            settings = QSettings("AplikasiSkripsi", "MicroExpression")
+            last_dir = settings.value("last_result_dir", "results")
+            
             file_path, _ = QFileDialog.getOpenFileName(
                 self, "Load Prediction Data",
-                "results", "Prediction Package (*.result);;CSV Files (*.csv);;All Files (*)"
+                last_dir, "Prediction Package (*.result);;CSV Files (*.csv);;All Files (*)"
             )
+            
+            if file_path:
+                settings.setValue("last_result_dir", os.path.dirname(file_path))
+                
         if not file_path:
             return
 
