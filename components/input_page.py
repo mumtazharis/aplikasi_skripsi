@@ -3,9 +3,10 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QFileDialog, QProgressBar, QStackedWidget, QSizePolicy
 )
-from PySide6.QtCore import Signal, Qt
+from PySide6.QtCore import Signal, Qt, QTimer
 from PySide6.QtGui import QPixmap, QImage
 import cv2
+import time
 
 from components.record_dialog import RecordDialog
 from workers.prediction_worker import PredictionWorker
@@ -25,6 +26,10 @@ class InputPage(QWidget):
         self.source_type = None
         self.prediction_worker = None
         self.record_widget = None
+        
+        self.start_timer = 0
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self._update_time_elapsed)
 
         self.setup_ui()
 
@@ -233,6 +238,11 @@ class InputPage(QWidget):
         self.lbl_status.setWordWrap(True)
         layout.addWidget(self.lbl_status)
 
+        self.lbl_time_elapsed = QLabel("")
+        self.lbl_time_elapsed.setStyleSheet("color: #888; font-size: 10px; font-weight: bold;")
+        self.lbl_time_elapsed.setVisible(False)
+        layout.addWidget(self.lbl_time_elapsed)
+
         # Open Dashboard button
         self.btn_open_dashboard = QPushButton("  View Results in Analysis")
         self.btn_open_dashboard.setStyleSheet("""
@@ -367,6 +377,7 @@ class InputPage(QWidget):
         self.btn_start_predict.setEnabled(True)
         self.btn_open_dashboard.setVisible(False)
         self.lbl_status.setText("")
+        self.lbl_time_elapsed.setVisible(False)
 
     def _show_thumbnail(self, frame_rgb):
         h, w, ch = frame_rgb.shape
@@ -389,6 +400,13 @@ class InputPage(QWidget):
         if not self.source_path:
             return
 
+        output_dir = QFileDialog.getExistingDirectory(
+            self, "Select Output Directory", ""
+        )
+        
+        if not output_dir:
+            return
+
         self.btn_start_predict.setEnabled(False)
         self.btn_stop_predict.setVisible(True)
         self.btn_open_dashboard.setVisible(False)
@@ -398,8 +416,13 @@ class InputPage(QWidget):
 
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
+        
+        self.lbl_time_elapsed.setVisible(True)
+        self.lbl_time_elapsed.setText("Time Elapsed: 00:00")
+        self.start_timer = time.time()
+        self.timer.start(1000)
 
-        self.prediction_worker = PredictionWorker(self.source_path)
+        self.prediction_worker = PredictionWorker(self.source_path, output_dir=output_dir)
         self.prediction_worker.progress.connect(self._on_progress)
         self.prediction_worker.status.connect(self._on_status)
         self.prediction_worker.finished.connect(self._on_prediction_done)
@@ -437,7 +460,18 @@ class InputPage(QWidget):
         self._reset_predict_ui()
         self.lbl_status.setText(f"Error: {msg}")
 
+    def _update_time_elapsed(self):
+        elapsed = int(time.time() - self.start_timer)
+        mins, secs = divmod(elapsed, 60)
+        hrs, mins = divmod(mins, 60)
+        if hrs > 0:
+            self.lbl_time_elapsed.setText(f"Time Elapsed: {hrs:02d}:{mins:02d}:{secs:02d}")
+        else:
+            self.lbl_time_elapsed.setText(f"Time Elapsed: {mins:02d}:{secs:02d}")
+
     def _reset_predict_ui(self):
+        if self.timer.isActive():
+            self.timer.stop()
         self.btn_start_predict.setEnabled(True)
         self.btn_stop_predict.setVisible(False)
         self.btn_record.setEnabled(True)

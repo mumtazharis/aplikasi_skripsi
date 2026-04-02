@@ -300,18 +300,17 @@ def load_csv_data(csv_path):
     with open(csv_path, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            data.append({
-                "frame_index": int(row["frame_index"]),
-                "timestamp_ms": float(row["timestamp_ms"]),
-                "macro_label": row["macro_label"],
-                "macro_confidence": float(row["macro_confidence"]),
-                "micro_label": row.get("micro_label", "N/A"),
-                "micro_confidence": float(row.get("micro_confidence", 0)),
-                "face_x1": int(row.get("face_x1", 0)),
-                "face_y1": int(row.get("face_y1", 0)),
-                "face_x2": int(row.get("face_x2", 0)),
-                "face_y2": int(row.get("face_y2", 0)),
-            })
+            parsed = dict(row)
+            for k, v in parsed.items():
+                if k in ["frame_index", "face_x1", "face_y1", "face_x2", "face_y2"]:
+                    parsed[k] = int(v) if v else 0
+                elif k in ["timestamp_ms", "macro_confidence", "micro_confidence"]:
+                    parsed[k] = float(v) if v else 0.0
+                elif k in ["macro_label", "micro_label"]:
+                    parsed[k] = v if v else "N/A"
+                elif k.startswith("area_"):
+                    parsed[k] = float(v) if v else 0.0
+            data.append(parsed)
     return data
 
 

@@ -7,6 +7,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QImage, QPixmap, QPainter, QPen, QColor
 import cv2
 
+from components.roi_linechart import RoiLineChartWidget
 from components.playback_chart import PlaybackChart
 from workers.playback_worker import PlaybackWorker, load_csv_data, load_meta
 
@@ -254,7 +255,7 @@ class DashboardPage(QWidget):
         self.lbl_source_ref = QLabel("Source: —")
         self.lbl_source_ref.setWordWrap(True)
         layout.addWidget(self.lbl_source_ref)
-
+        
         # --- Current Prediction ---
         self._add_separator(layout)
         self._add_section_title(layout, "CURRENT FRAME")
@@ -263,9 +264,14 @@ class DashboardPage(QWidget):
         self.lbl_frame_num.setStyleSheet("font-family: Consolas; font-size: 11px;")
         layout.addWidget(self.lbl_frame_num)
 
-       # Macro card
+        # 1. Buat layout horizontal untuk membagi 2 kolom
+        cards_layout = QHBoxLayout()
+        cards_layout.setSpacing(8) # Jarak antara card Macro dan Micro
+
+        # --- Macro card ---
         macro_card = QFrame()
         macro_card.setObjectName("macroCard")
+        macro_card.setFixedHeight(75) # Diperbesar sedikit dari 65 menjadi 75
         macro_card.setStyleSheet("""
             QFrame#macroCard {          
                 background-color: #232323;
@@ -274,28 +280,32 @@ class DashboardPage(QWidget):
             }
         """)
         mc_layout = QVBoxLayout(macro_card)
-        mc_layout.setContentsMargins(10, 6, 10, 6)
+        mc_layout.setContentsMargins(5, 5, 5, 5) # Margin diperkecil karena lebar mengecil
         mc_layout.setSpacing(3)
 
-        mc_header = QLabel("MACRO EXPRESSION")
+        mc_header = QLabel("MACRO") # Teks disingkat agar tidak terpotong
         mc_header.setStyleSheet("color: #777; font-size: 9px; font-weight: bold; letter-spacing: 1px;")
+        mc_header.setAlignment(Qt.AlignCenter) # Dibuat rata tengah agar rapi
         mc_layout.addWidget(mc_header)
 
         self.lbl_macro_label = QLabel("—")
-        self.lbl_macro_label.setStyleSheet("font-size: 18px; font-weight: bold; color: #888;")
+        self.lbl_macro_label.setStyleSheet("font-size: 16px; font-weight: bold; color: #888;")
         self.lbl_macro_label.setAlignment(Qt.AlignCenter)
         mc_layout.addWidget(self.lbl_macro_label)
 
-        self.lbl_macro_conf = QLabel("Confidence: —")
-        self.lbl_macro_conf.setStyleSheet("font-family: Consolas; font-size: 10px; color: #888;")
+        self.lbl_macro_conf = QLabel("Conf: —") # Teks disingkat
+        # 2. Teks diperbesar menjadi 12px (sebelumnya 10px)
+        self.lbl_macro_conf.setStyleSheet("font-family: Consolas; font-size: 12px; color: #888;")
         self.lbl_macro_conf.setAlignment(Qt.AlignCenter)
         mc_layout.addWidget(self.lbl_macro_conf)
 
-        layout.addWidget(macro_card)
+        # Masukkan Macro card ke layout 2 kolom
+        cards_layout.addWidget(macro_card)
 
-        # Micro card
+        # --- Micro card ---
         micro_card = QFrame()
         micro_card.setObjectName("microCard")
+        micro_card.setFixedHeight(75) # Diperbesar sedikit dari 65 menjadi 75
         micro_card.setStyleSheet("""
             QFrame#microCard {
                 background-color: #232323;
@@ -304,11 +314,12 @@ class DashboardPage(QWidget):
             }
         """)
         mi_layout = QVBoxLayout(micro_card)
-        mi_layout.setContentsMargins(10, 6, 10, 6)
+        mi_layout.setContentsMargins(5, 5, 5, 5) # Margin diperkecil
         mi_layout.setSpacing(3)
 
-        mi_header = QLabel("MICRO EXPRESSION")
+        mi_header = QLabel("MICRO") # Teks disingkat agar tidak terpotong
         mi_header.setStyleSheet("color: #777; font-size: 9px; font-weight: bold; letter-spacing: 1px;")
+        mi_header.setAlignment(Qt.AlignCenter)
         mi_layout.addWidget(mi_header)
 
         self.lbl_micro_label = QLabel("—")
@@ -316,50 +327,77 @@ class DashboardPage(QWidget):
         self.lbl_micro_label.setAlignment(Qt.AlignCenter)
         mi_layout.addWidget(self.lbl_micro_label)
 
-        self.lbl_micro_status = QLabel("Status: —")
-        self.lbl_micro_status.setStyleSheet("font-family: Consolas; font-size: 10px; color: #888;")
+        self.lbl_micro_status = QLabel("Stat: —") # Teks disingkat
+        # 2. Teks diperbesar menjadi 12px (sebelumnya 10px)
+        self.lbl_micro_status.setStyleSheet("font-family: Consolas; font-size: 12px; color: #888;")
         self.lbl_micro_status.setAlignment(Qt.AlignCenter)
         mi_layout.addWidget(self.lbl_micro_status)
 
-        layout.addWidget(micro_card)
+        # Masukkan Micro card ke layout 2 kolom
+        cards_layout.addWidget(micro_card)
 
-        # --- Stats: Macro ---
+        # 3. Tambahkan layout horizontal (berisi 2 card) ke sidebar utama
+        layout.addLayout(cards_layout)
+
+        # --- Statistics (2 Columns) ---
         self._add_separator(layout)
-        self._add_section_title(layout, "MACRO STATISTICS")
+        
+        stats_container = QWidget()
+        stats_layout = QHBoxLayout(stats_container)
+        stats_layout.setContentsMargins(0, 0, 0, 0)
+
+        # Macro Col
+        macro_col = QVBoxLayout()
+        self._add_section_title(macro_col, "MACRO STATS")
 
         self.lbl_stats_positive = QLabel("Positive: —")
         self.lbl_stats_positive.setStyleSheet("color: #4caf50;")
-        layout.addWidget(self.lbl_stats_positive)
+        macro_col.addWidget(self.lbl_stats_positive)
 
         self.lbl_stats_neutral = QLabel("Neutral: —")
         self.lbl_stats_neutral.setStyleSheet("color: #e6a817;")
-        layout.addWidget(self.lbl_stats_neutral)
+        macro_col.addWidget(self.lbl_stats_neutral)
 
         self.lbl_stats_negative = QLabel("Negative: —")
         self.lbl_stats_negative.setStyleSheet("color: #e74c3c;")
-        layout.addWidget(self.lbl_stats_negative)
+        macro_col.addWidget(self.lbl_stats_negative)
+        macro_col.addStretch()
 
-        # --- Stats: Micro ---
-        self._add_separator(layout)
-        self._add_section_title(layout, "MICRO STATISTICS")
+        stats_layout.addLayout(macro_col)
 
-        self.lbl_micro_event_count = QLabel("Events Detected: —")
+        # Micro Col
+        micro_col = QVBoxLayout()
+        self._add_section_title(micro_col, "MICRO STATS")
+
+        self.lbl_micro_event_count = QLabel("Events: —")
         self.lbl_micro_event_count.setStyleSheet("color: #aaa;")
-        layout.addWidget(self.lbl_micro_event_count)
+        micro_col.addWidget(self.lbl_micro_event_count)
 
-        self.lbl_micro_frame_count = QLabel("Frames Affected: —")
+        self.lbl_micro_frame_count = QLabel("Frames: —")
         self.lbl_micro_frame_count.setStyleSheet("color: #aaa;")
-        layout.addWidget(self.lbl_micro_frame_count)
+        micro_col.addWidget(self.lbl_micro_frame_count)
 
         self.lbl_micro_pos = QLabel("Positive: —")
         self.lbl_micro_pos.setStyleSheet("color: #4caf50;")
-        layout.addWidget(self.lbl_micro_pos)
+        micro_col.addWidget(self.lbl_micro_pos)
 
         self.lbl_micro_neg = QLabel("Negative: —")
         self.lbl_micro_neg.setStyleSheet("color: #e74c3c;")
-        layout.addWidget(self.lbl_micro_neg)
+        micro_col.addWidget(self.lbl_micro_neg)
+        micro_col.addStretch()
 
-        layout.addStretch()
+        stats_layout.addLayout(micro_col)
+        
+        layout.addWidget(stats_container)
+
+        # --- ROI Vis ---
+        self._add_separator(layout)
+        self._add_section_title(layout, "ROI MOTION INTENSITY")
+        
+        self.roi_vis = RoiLineChartWidget()
+        self.roi_vis.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        layout.addWidget(self.roi_vis, 1)
+
         return sidebar
 
     def _add_separator(self, layout):
@@ -438,6 +476,8 @@ class DashboardPage(QWidget):
         self._compute_stats()
 
         self.playback_chart.set_data(self.csv_data)
+        if hasattr(self, 'roi_vis'):
+            self.roi_vis.set_data(self.csv_data)
 
         self.seek_slider.setEnabled(True)
         self.seek_slider.setMinimum(0)
@@ -635,7 +675,7 @@ class DashboardPage(QWidget):
         self.lbl_macro_label.setStyleSheet(f"""
             font-size: 18px; font-weight: bold; color: {color};
         """)
-        self.lbl_macro_conf.setText(f"Confidence: {conf:.4f}")
+        self.lbl_macro_conf.setText(f"Conf: {conf:.4f}")
 
         # Micro label
         micro = row.get('micro_label', '').strip()
@@ -650,15 +690,19 @@ class DashboardPage(QWidget):
                 micro_color = '#aaa'
             self.lbl_micro_label.setText(micro.upper())
             self.lbl_micro_label.setStyleSheet(f"""
-                font-size: 16px; font-weight: bold; color: {micro_color};
+                font-size: 18px; font-weight: bold; color: {micro_color};
             """)
-            self.lbl_micro_status.setText(f"Confidence: {micro_conf:.4f}")
-            self.lbl_micro_status.setStyleSheet(f"font-family: Consolas; font-size: 10px; color: {micro_color};")
+            self.lbl_micro_status.setText(f"Conf: {micro_conf:.4f}")
+            self.lbl_micro_status.setStyleSheet("font-family: Consolas; font-size: 12px; color: #888;")
         else:
             self.lbl_micro_label.setText("—")
-            self.lbl_micro_label.setStyleSheet("font-size: 16px; font-weight: bold; color: #444;")
+            self.lbl_micro_label.setStyleSheet("font-size: 18px; font-weight: bold; color: #444;")
             self.lbl_micro_status.setText("Not detected")
-            self.lbl_micro_status.setStyleSheet("font-size: 10px; color: #555;")
+            self.lbl_micro_status.setStyleSheet("font-family: Consolas; font-size: 12px; color: #555;")
+            
+        # Update ROI Visualization Cursor
+        if hasattr(self, 'roi_vis'):
+            self.roi_vis.set_cursor(frame_idx)
     
     def update_scroll_to_cursor(self):
         # 1. Pastikan data ada

@@ -186,7 +186,7 @@ class PredictionWorker(QThread):
                 f"Fase 4/{4}: Micro Classification ({len(detected_events)} events)..."
             )
 
-            micro_spots = []  # list of (onset_idx, offset_idx, class_name)
+            micro_spots = []  # list of (onset_idx, apex_idx, offset_idx, class_name, conf)
 
             for ev_idx, ev in enumerate(detected_events):
                 if not self.running:
@@ -240,7 +240,7 @@ class PredictionWorker(QThread):
                     pred_class_micro = MICRO_CLASSES[pred_m.item()]
                     micro_confidence = conf_micro.item()
 
-                micro_spots.append((on_idx, off_idx, pred_class_micro, micro_confidence))
+                micro_spots.append((on_idx, ap_idx, off_idx, pred_class_micro, micro_confidence))
 
                 self.progress.emit(ev_idx + 1, len(detected_events))
 
@@ -262,11 +262,11 @@ class PredictionWorker(QThread):
             csv_path = os.path.join(self.output_dir, csv_filename)
             meta_path = csv_path.replace(".csv", "_meta.txt")
 
-            # Build micro label lookup: aligned_idx → (micro_class, confidence)
+            # Build micro label lookup: aligned_idx → (micro_class, confidence, on_idx, ap_idx, off_idx)
             micro_labels = {}
-            for on_idx, off_idx, micro_class, micro_conf_val in micro_spots:
+            for on_idx, ap_idx, off_idx, micro_class, micro_conf_val in micro_spots:
                 for fi in range(on_idx, off_idx + 1):
-                    micro_labels[fi] = (micro_class, micro_conf_val)
+                    micro_labels[fi] = (micro_class, micro_conf_val, on_idx, ap_idx, off_idx)
 
             # Get video metadata
             fps_val = 30
@@ -284,12 +284,15 @@ class PredictionWorker(QThread):
             annotations = {}
             with open(csv_path, "w", newline="", encoding="utf-8") as csvfile:
                 writer = csv.writer(csvfile)
-                writer.writerow([
+                roi_names = list(history_per_roi.keys())
+                header = [
                     "frame_index", "timestamp_ms",
                     "macro_label", "macro_confidence",
                     "micro_label", "micro_confidence",
+                    "event_onset_frame", "event_apex_frame", "event_offset_frame",
                     "face_x1", "face_y1", "face_x2", "face_y2",
-                ])
+                ] + roi_names
+                writer.writerow(header)
 
                 for aligned_idx, (_, macro_class, macro_conf) in enumerate(macro_predictions):
                     raw_idx = valid_indices[aligned_idx]
@@ -297,10 +300,14 @@ class PredictionWorker(QThread):
 
                     micro_entry = micro_labels.get(aligned_idx, None)
                     if micro_entry:
-                        micro_label, micro_conf = micro_entry
+                        micro_label, micro_conf, ev_on, ev_ap, ev_off = micro_entry
+                        raw_ev_on = valid_indices[ev_on]
+                        raw_ev_ap = valid_indices[ev_ap]
+                        raw_ev_off = valid_indices[ev_off]
                     else:
                         micro_label = ""
                         micro_conf = 0
+                        raw_ev_on, raw_ev_ap, raw_ev_off = "", "", ""
 
                     # Face box from raw frame landmarks (approximate from aligned frame)
                     # We use the aligned index mapped to the raw frame
@@ -317,20 +324,28 @@ class PredictionWorker(QThread):
                         face_x1, face_y1 = min(xs), min(ys)
                         face_x2, face_y2 = max(xs), max(ys)
 
-                    writer.writerow([
+                    row = [
                         raw_idx,
                         f"{timestamp_ms:.1f}",
                         macro_class,
                         f"{macro_conf:.4f}",
                         micro_label,
                         f"{micro_conf:.4f}" if micro_conf else 0,
+                        raw_ev_on, raw_ev_ap, raw_ev_off,
                         face_x1, face_y1, face_x2, face_y2,
-                    ])
+                    ]
+                    
+                    for name in roi_names:
+                        val = history_per_roi[name][raw_idx] if raw_idx < len(history_per_roi[name]) else 0.0
+                        row.append(f"{val:.4f}")
+                        
+                    writer.writerow(row)
 
                     annotations[raw_idx] = {
                         "macro_label": macro_class,
                         "macro_conf": macro_conf,
                         "micro_label": micro_label,
+                        "micro_conf": micro_conf,
                         "face_x1": face_x1,
                         "face_y1": face_y1,
                         "face_x2": face_x2,
@@ -369,17 +384,34 @@ class PredictionWorker(QThread):
                         else:
                             color = (136, 136, 136)
 
-                        cv2.rectangle(out_frame, (x1, y1), (x2, y2), color, 2)
+                        cv2.rectangle(out_frame, (x1, y1), (x2, y2), color, 1)
                         
-                        display_text = f"{label} ({ann['macro_conf']:.2f})"
-                        micro = ann["micro_label"]
-                        if micro and micro.lower() not in ('', 'n/a'):
-                            display_text += f" | Micro: {micro}"
-                            
+                        # --- Macro text (warna utama)
+                        macro_text = f"{label} ({ann['macro_conf']:.2f})"
                         cv2.putText(
-                            out_frame, display_text,
+                            out_frame, macro_text,
                             (x1, y1 - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2
                         )
+
+                        # --- Micro text (warna sendiri)
+                        micro = ann["micro_label"]
+                        if micro and micro.lower() not in ('', 'n/a'):
+                            micro_lower = micro.lower()
+
+                            if micro_lower == "positive":
+                                micro_color = (80, 175, 76)   # hijau
+                            elif micro_lower == "negative":
+                                micro_color = (60, 76, 231)   # merah
+                            else:
+                                micro_color = (200, 200, 200) # default abu
+
+                            micro_text = f"Micro: {micro} ({ann['micro_conf']:.2f})"
+
+                            cv2.putText(
+                                out_frame, micro_text,
+                                (x1, y1 - 28),  # ditaruh di atas macro
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, micro_color, 2
+                            )
                 
                 writer_vid.write(out_frame)
                 
