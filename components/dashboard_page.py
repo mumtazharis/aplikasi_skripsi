@@ -45,9 +45,10 @@ class DashboardPage(QWidget):
         self.video_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.video_label.setStyleSheet("""
             background-color: #1a1a1a;
-            color: #555;
+            color: #555555;
+            font-family: 'Segoe UI', 'Roboto', sans-serif;
             font-size: 14px;
-            font-weight: bold;
+            font-weight: 600;
         """)
         left_layout.addWidget(self.video_label, 3)
 
@@ -55,7 +56,7 @@ class DashboardPage(QWidget):
         controls_bar = self._create_controls_bar()
         left_layout.addWidget(controls_bar)
 
-       # Timeline chart
+        # Timeline chart
         chart_container = QFrame()
         chart_container.setStyleSheet("background-color: #232323; border: none;")
         chart_layout = QVBoxLayout(chart_container)
@@ -64,11 +65,11 @@ class DashboardPage(QWidget):
 
         chart_header = QFrame()
         chart_header.setFixedHeight(24)
-        chart_header.setStyleSheet("background-color: #1e1e1e; border-bottom: 1px solid #3a3a3a;")
+        chart_header.setStyleSheet("background-color: #1e1e1e; border-bottom: 1px solid #333333;")
         ch_layout = QHBoxLayout(chart_header)
         ch_layout.setContentsMargins(12, 0, 12, 0)
         ch_title = QLabel("EMOTION TIMELINE")
-        ch_title.setStyleSheet("color: #777; font-size: 10px; font-weight: bold; letter-spacing: 2px;")
+        ch_title.setStyleSheet("font-family: 'Segoe UI', sans-serif; color: #858585; font-size: 10px; font-weight: 700; letter-spacing: 2px;")
         ch_layout.addWidget(ch_title)
         chart_layout.addWidget(chart_header)
 
@@ -77,15 +78,15 @@ class DashboardPage(QWidget):
 
         # ====== BAGIAN YANG DISESUAIKAN UNTUK SCROLL ======
         self.scroll_area = QScrollArea()
-        self.scroll_area.setWidgetResizable(True) # Agar tinggi chart mengikuti area
-        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn) # Munculkan scroll bawah
-        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)  # Matikan scroll samping
-        self.scroll_area.setFrameShape(QFrame.NoFrame) # Menghilangkan border bawaan scroll area agar rapi
+        self.scroll_area.setWidgetResizable(True) 
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn) 
+        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)  
+        self.scroll_area.setFrameShape(QFrame.NoFrame) 
         
         # 1. Masukkan chart ke dalam scroll area
         self.scroll_area.setWidget(self.playback_chart)
         
-        # 2. Tambahkan scroll area ke layout (BUKAN chart-nya secara langsung)
+        # 2. Tambahkan scroll area ke layout
         chart_layout.addWidget(self.scroll_area)
         # ===================================================
 
@@ -101,8 +102,8 @@ class DashboardPage(QWidget):
         bar = QFrame()
         bar.setFixedHeight(44)
         bar.setStyleSheet("""
-            QFrame { background-color: #1e1e1e; border-top: 1px solid #3a3a3a; }
-            QLabel { color: #999; font-size: 10px; }
+            QFrame { background-color: #1e1e1e; border-top: 1px solid #333333; }
+            QLabel { font-family: 'Segoe UI', sans-serif; color: #a0a0a0; font-size: 11px; }
         """)
 
         layout = QHBoxLayout(bar)
@@ -119,7 +120,7 @@ class DashboardPage(QWidget):
                 font-size: 12px;
             }
             QPushButton:hover { background-color: #454545; }
-            QPushButton:disabled { color: #444; }
+            QPushButton:disabled { color: #444444; border: 1px solid #333333; }
         """)
         self.btn_play.setEnabled(False)
         self.btn_play.clicked.connect(self.toggle_play)
@@ -135,7 +136,7 @@ class DashboardPage(QWidget):
                 font-size: 10px;
             }
             QPushButton:hover { background-color: #454545; }
-            QPushButton:disabled { color: #444; }
+            QPushButton:disabled { color: #444444; border: 1px solid #333333; }
         """)
         self.btn_stop.setEnabled(False)
         self.btn_stop.clicked.connect(self.stop_playback)
@@ -143,32 +144,24 @@ class DashboardPage(QWidget):
 
         # Current time
         self.lbl_time = QLabel("0:00")
-        self.lbl_time.setStyleSheet("color: #ccc; font-family: Consolas; font-size: 11px; min-width: 36px;")
+        self.lbl_time.setStyleSheet("color: #cccccc; font-family: 'Consolas', monospace; font-size: 12px; min-width: 36px;")
         layout.addWidget(self.lbl_time)
 
-        # Seek slider — Adobe style
+        # Seek slider
         self.seek_slider = QSlider(Qt.Horizontal)
         self.seek_slider.setEnabled(False)
         self.seek_slider.setStyleSheet("""
             QSlider::groove:horizontal {
-                border: none;
-                height: 4px;
-                background: #383838;
-                border-radius: 2px;
+                border: none; height: 4px; background: #383838; border-radius: 2px;
             }
             QSlider::handle:horizontal {
-                background: #2d8ceb;
-                width: 12px;
-                height: 12px;
-                margin: -4px 0;
-                border-radius: 6px;
+                background: #0e639c; width: 12px; height: 12px; margin: -4px 0; border-radius: 6px;
             }
             QSlider::handle:horizontal:hover {
-                background: #4aa3f5;
+                background: #1177bb;
             }
             QSlider::sub-page:horizontal {
-                background: #2d8ceb;
-                border-radius: 2px;
+                background: #0e639c; border-radius: 2px;
             }
         """)
         self.seek_slider.valueChanged.connect(self._on_slider_seek)
@@ -176,7 +169,7 @@ class DashboardPage(QWidget):
 
         # Total time
         self.lbl_total_time = QLabel("0:00")
-        self.lbl_total_time.setStyleSheet("color: #777; font-family: Consolas; font-size: 11px; min-width: 36px;")
+        self.lbl_total_time.setStyleSheet("color: #858585; font-family: 'Consolas', monospace; font-size: 12px; min-width: 36px;")
         layout.addWidget(self.lbl_total_time)
 
         # Speed selector
@@ -186,13 +179,13 @@ class DashboardPage(QWidget):
         self.speed_combo = QComboBox()
         self.speed_combo.setStyleSheet("""
             QComboBox {
-                background-color: #383838; color: #ccc;
+                background-color: #2d2d2d; color: #cccccc;
                 border: 1px solid #4a4a4a; border-radius: 3px;
-                padding: 3px 6px; font-size: 10px;
+                padding: 3px 6px; font-size: 11px; font-family: 'Segoe UI', sans-serif;
             }
             QComboBox QAbstractItemView {
-                background-color: #383838; color: #ccc;
-                selection-background-color: #2d8ceb;
+                background-color: #2d2d2d; color: #cccccc;
+                selection-background-color: #0e639c;
             }
         """)
         self.speed_combo.addItem("0.25x", 0.25)
@@ -212,31 +205,34 @@ class DashboardPage(QWidget):
         sidebar.setMinimumWidth(280)
         sidebar.setMaximumWidth(320)
         sidebar.setStyleSheet("""
-            QFrame { background-color: #2d2d2d; border: none; border-left: 1px solid #3a3a3a; }
-            QLabel { color: #ccc; font-size: 11px; }
+            QFrame { background-color: #252526; border: none; border-left: 1px solid #333333; }
+            QLabel { font-family: 'Segoe UI', 'Roboto', 'Helvetica Neue', sans-serif; color: #d4d4d4; font-size: 12px; }
         """)
 
         layout = QVBoxLayout(sidebar)
-        layout.setContentsMargins(14, 14, 14, 14)
-        layout.setSpacing(5)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(6)
 
         # Title
-        title = QLabel("ANALYSIS")
+        title = QLabel("ANALYSIS DASHBOARD")
         title.setStyleSheet("""
-            font-size: 11px; font-weight: bold; color: #2d8ceb;
-            letter-spacing: 2px;
+            font-family: 'Segoe UI', 'Roboto', sans-serif;
+            font-size: 13px; font-weight: 800; color: #4aa3f5;
+            letter-spacing: 1.5px; margin-bottom: 4px;
         """)
         layout.addWidget(title)
 
         # Load CSV button
-        self.btn_load_csv = QPushButton("  Load File")
+        self.btn_load_csv = QPushButton(" Load Analysis File")
         self.btn_load_csv.setStyleSheet("""
             QPushButton {
-                background-color: #2d8ceb; color: white;
-                border: none; border-radius: 3px;
-                padding: 10px; font-size: 12px; font-weight: bold;
+                background-color: #0e639c; color: #ffffff;
+                border: 1px solid #1177bb; border-radius: 4px;
+                padding: 8px; font-size: 12px; font-weight: 600;
+                font-family: 'Segoe UI', 'Roboto', sans-serif;
             }
-            QPushButton:hover { background-color: #4aa3f5; }
+            QPushButton:hover { background-color: #1177bb; }
+            QPushButton:pressed { background-color: #094771; }
         """)
         self.btn_load_csv.clicked.connect(self.load_csv)
         layout.addWidget(self.btn_load_csv)
@@ -245,7 +241,7 @@ class DashboardPage(QWidget):
         self._add_separator(layout)
         self._add_section_title(layout, "DATA INFO")
 
-        self.lbl_csv_name = QLabel("CSV: —")
+        self.lbl_csv_name = QLabel("File: —")
         self.lbl_csv_name.setWordWrap(True)
         layout.addWidget(self.lbl_csv_name)
 
@@ -261,85 +257,80 @@ class DashboardPage(QWidget):
         self._add_section_title(layout, "CURRENT FRAME")
 
         self.lbl_frame_num = QLabel("Frame: —")
-        self.lbl_frame_num.setStyleSheet("font-family: Consolas; font-size: 11px;")
+        self.lbl_frame_num.setStyleSheet("font-family: 'Consolas', monospace; font-size: 12px; color: #a0a0a0; margin-bottom: 4px;")
         layout.addWidget(self.lbl_frame_num)
 
-        # 1. Buat layout horizontal untuk membagi 2 kolom
+        # Layout horizontal 2 kolom
         cards_layout = QHBoxLayout()
-        cards_layout.setSpacing(8) # Jarak antara card Macro dan Micro
+        cards_layout.setSpacing(10) 
 
         # --- Macro card ---
         macro_card = QFrame()
         macro_card.setObjectName("macroCard")
-        macro_card.setFixedHeight(75) # Diperbesar sedikit dari 65 menjadi 75
+        macro_card.setFixedHeight(80) 
         macro_card.setStyleSheet("""
             QFrame#macroCard {          
-                background-color: #232323;
-                border: 1px solid #3a3a3a;
-                border-radius: 3px;
+                background-color: #1e1e1e;
+                border: 1px solid #333333;
+                border-radius: 6px;
             }
         """)
         mc_layout = QVBoxLayout(macro_card)
-        mc_layout.setContentsMargins(5, 5, 5, 5) # Margin diperkecil karena lebar mengecil
-        mc_layout.setSpacing(3)
+        mc_layout.setContentsMargins(6, 8, 6, 8) 
+        mc_layout.setSpacing(2)
 
-        mc_header = QLabel("MACRO") # Teks disingkat agar tidak terpotong
-        mc_header.setStyleSheet("color: #777; font-size: 9px; font-weight: bold; letter-spacing: 1px;")
-        mc_header.setAlignment(Qt.AlignCenter) # Dibuat rata tengah agar rapi
+        mc_header = QLabel("MACRO")
+        mc_header.setStyleSheet("color: #858585; font-size: 10px; font-weight: 700; letter-spacing: 1px;")
+        mc_header.setAlignment(Qt.AlignCenter)
         mc_layout.addWidget(mc_header)
 
         self.lbl_macro_label = QLabel("—")
-        self.lbl_macro_label.setStyleSheet("font-size: 16px; font-weight: bold; color: #888;")
+        self.lbl_macro_label.setStyleSheet("font-size: 20px; font-weight: 800; color: #888888;")
         self.lbl_macro_label.setAlignment(Qt.AlignCenter)
         mc_layout.addWidget(self.lbl_macro_label)
 
-        self.lbl_macro_conf = QLabel("Conf: —") # Teks disingkat
-        # 2. Teks diperbesar menjadi 12px (sebelumnya 10px)
-        self.lbl_macro_conf.setStyleSheet("font-family: Consolas; font-size: 12px; color: #888;")
+        self.lbl_macro_conf = QLabel("Conf: —") 
+        self.lbl_macro_conf.setStyleSheet("font-family: 'Consolas', monospace; font-size: 11px; color: #9e9e9e;")
         self.lbl_macro_conf.setAlignment(Qt.AlignCenter)
         mc_layout.addWidget(self.lbl_macro_conf)
 
-        # Masukkan Macro card ke layout 2 kolom
         cards_layout.addWidget(macro_card)
 
         # --- Micro card ---
         micro_card = QFrame()
         micro_card.setObjectName("microCard")
-        micro_card.setFixedHeight(75) # Diperbesar sedikit dari 65 menjadi 75
+        micro_card.setFixedHeight(80) 
         micro_card.setStyleSheet("""
             QFrame#microCard {
-                background-color: #232323;
-                border: 1px solid #3a3a3a;
-                border-radius: 3px;
+                background-color: #1e1e1e;
+                border: 1px solid #333333;
+                border-radius: 6px;
             }
         """)
         mi_layout = QVBoxLayout(micro_card)
-        mi_layout.setContentsMargins(5, 5, 5, 5) # Margin diperkecil
-        mi_layout.setSpacing(3)
+        mi_layout.setContentsMargins(6, 8, 6, 8) 
+        mi_layout.setSpacing(2)
 
-        mi_header = QLabel("MICRO") # Teks disingkat agar tidak terpotong
-        mi_header.setStyleSheet("color: #777; font-size: 9px; font-weight: bold; letter-spacing: 1px;")
+        mi_header = QLabel("MICRO") 
+        mi_header.setStyleSheet("color: #858585; font-size: 10px; font-weight: 700; letter-spacing: 1px;")
         mi_header.setAlignment(Qt.AlignCenter)
         mi_layout.addWidget(mi_header)
 
         self.lbl_micro_label = QLabel("—")
-        self.lbl_micro_label.setStyleSheet("font-size: 16px; font-weight: bold; color: #888;")
+        self.lbl_micro_label.setStyleSheet("font-size: 20px; font-weight: 800; color: #888888;")
         self.lbl_micro_label.setAlignment(Qt.AlignCenter)
         mi_layout.addWidget(self.lbl_micro_label)
 
-        self.lbl_micro_status = QLabel("Stat: —") # Teks disingkat
-        # 2. Teks diperbesar menjadi 12px (sebelumnya 10px)
-        self.lbl_micro_status.setStyleSheet("font-family: Consolas; font-size: 12px; color: #888;")
+        self.lbl_micro_status = QLabel("Stat: —") 
+        self.lbl_micro_status.setStyleSheet("font-family: 'Consolas', monospace; font-size: 11px; color: #9e9e9e;")
         self.lbl_micro_status.setAlignment(Qt.AlignCenter)
         mi_layout.addWidget(self.lbl_micro_status)
 
-        # Masukkan Micro card ke layout 2 kolom
         cards_layout.addWidget(micro_card)
 
-        # 3. Tambahkan layout horizontal (berisi 2 card) ke sidebar utama
         layout.addLayout(cards_layout)
 
-        # --- Statistics (2 Columns) ---
+        # --- Statistics ---
         self._add_separator(layout)
         
         stats_container = QWidget()
@@ -350,16 +341,17 @@ class DashboardPage(QWidget):
         macro_col = QVBoxLayout()
         self._add_section_title(macro_col, "MACRO STATS")
 
+        # Tweak colors slightly for dark theme visibility
         self.lbl_stats_positive = QLabel("Positive: —")
-        self.lbl_stats_positive.setStyleSheet("color: #4caf50;")
+        self.lbl_stats_positive.setStyleSheet("color: #6a9955; font-family: 'Consolas', monospace; font-size: 11px;")
         macro_col.addWidget(self.lbl_stats_positive)
 
         self.lbl_stats_neutral = QLabel("Neutral: —")
-        self.lbl_stats_neutral.setStyleSheet("color: #e6a817;")
+        self.lbl_stats_neutral.setStyleSheet("color: #d7ba7d; font-family: 'Consolas', monospace; font-size: 11px;")
         macro_col.addWidget(self.lbl_stats_neutral)
 
         self.lbl_stats_negative = QLabel("Negative: —")
-        self.lbl_stats_negative.setStyleSheet("color: #e74c3c;")
+        self.lbl_stats_negative.setStyleSheet("color: #d16969; font-family: 'Consolas', monospace; font-size: 11px;")
         macro_col.addWidget(self.lbl_stats_negative)
         macro_col.addStretch()
 
@@ -370,19 +362,19 @@ class DashboardPage(QWidget):
         self._add_section_title(micro_col, "MICRO STATS")
 
         self.lbl_micro_event_count = QLabel("Events: —")
-        self.lbl_micro_event_count.setStyleSheet("color: #aaa;")
+        self.lbl_micro_event_count.setStyleSheet("color: #cccccc; font-family: 'Consolas', monospace; font-size: 11px;")
         micro_col.addWidget(self.lbl_micro_event_count)
 
         self.lbl_micro_frame_count = QLabel("Frames: —")
-        self.lbl_micro_frame_count.setStyleSheet("color: #aaa;")
+        self.lbl_micro_frame_count.setStyleSheet("color: #cccccc; font-family: 'Consolas', monospace; font-size: 11px;")
         micro_col.addWidget(self.lbl_micro_frame_count)
 
         self.lbl_micro_pos = QLabel("Positive: —")
-        self.lbl_micro_pos.setStyleSheet("color: #4caf50;")
+        self.lbl_micro_pos.setStyleSheet("color: #6a9955; font-family: 'Consolas', monospace; font-size: 11px;")
         micro_col.addWidget(self.lbl_micro_pos)
 
         self.lbl_micro_neg = QLabel("Negative: —")
-        self.lbl_micro_neg.setStyleSheet("color: #e74c3c;")
+        self.lbl_micro_neg.setStyleSheet("color: #d16969; font-family: 'Consolas', monospace; font-size: 11px;")
         micro_col.addWidget(self.lbl_micro_neg)
         micro_col.addStretch()
 
@@ -403,14 +395,15 @@ class DashboardPage(QWidget):
     def _add_separator(self, layout):
         sep = QFrame()
         sep.setFrameShape(QFrame.HLine)
-        sep.setStyleSheet("background-color: #3a3a3a; max-height: 1px; margin-top: 3px; margin-bottom: 1px;")
+        sep.setStyleSheet("background-color: #333333; max-height: 1px; margin-top: 8px; margin-bottom: 4px;")
         layout.addWidget(sep)
 
     def _add_section_title(self, layout, text):
         lbl = QLabel(text)
         lbl.setStyleSheet("""
-            font-size: 10px; font-weight: bold; color: #999;
-            letter-spacing: 2px; margin-top: 2px;
+            font-family: 'Segoe UI', 'Roboto', sans-serif;
+            font-size: 10px; font-weight: 700; color: #858585;
+            letter-spacing: 1.5px; margin-top: 4px; margin-bottom: 2px;
         """)
         layout.addWidget(lbl)
 
@@ -466,7 +459,7 @@ class DashboardPage(QWidget):
         self.total_frames = len(self.csv_data)
 
         csv_name = os.path.basename(csv_path)
-        self.lbl_csv_name.setText(f"CSV: {csv_name}")
+        self.lbl_csv_name.setText(f"File: {csv_name}")
         self.lbl_total_frames.setText(f"Total Frames: {self.total_frames}")
 
         # Load metadata
@@ -546,13 +539,13 @@ class DashboardPage(QWidget):
 
         # Macro stats
         self.lbl_stats_positive.setText(
-            f"Positive: {counts['positive']}  ({counts['positive']/total*100:.1f}%)"
+            f"Pos: {counts['positive']} ({counts['positive']/total*100:.1f}%)"
         )
         self.lbl_stats_neutral.setText(
-            f"Neutral: {counts['neutral']}  ({counts['neutral']/total*100:.1f}%)"
+            f"Neu: {counts['neutral']} ({counts['neutral']/total*100:.1f}%)"
         )
         self.lbl_stats_negative.setText(
-            f"Negative: {counts['negative']}  ({counts['negative']/total*100:.1f}%)"
+            f"Neg: {counts['negative']} ({counts['negative']/total*100:.1f}%)"
         )
 
         # Micro stats
@@ -569,15 +562,15 @@ class DashboardPage(QWidget):
 
         micro_total_frames = micro_frame_counts['positive'] + micro_frame_counts['negative']
 
-        self.lbl_micro_event_count.setText(f"Events Detected: {micro_events}")
+        self.lbl_micro_event_count.setText(f"Events: {micro_events}")
         self.lbl_micro_frame_count.setText(
-            f"Frames Affected: {micro_total_frames}  ({micro_total_frames/total*100:.1f}%)"
+            f"Frames: {micro_total_frames} ({micro_total_frames/total*100:.1f}%)"
         )
         self.lbl_micro_pos.setText(
-            f"Positive: {micro_frame_counts['positive']} frames"
+            f"Pos: {micro_frame_counts['positive']} f"
         )
         self.lbl_micro_neg.setText(
-            f"Negative: {micro_frame_counts['negative']} frames"
+            f"Neg: {micro_frame_counts['negative']} f"
         )
 
     # ==================
@@ -668,19 +661,20 @@ class DashboardPage(QWidget):
 
         self.lbl_frame_num.setText(f"Frame: {frame_idx}")
 
-        # Macro color
+        # Macro color - softer modern palette
         if label_lower == "positive":
-            color = "#4caf50"
+            color = "#6a9955"
         elif label_lower == "negative":
-            color = "#e74c3c"
+            color = "#d16969"
         elif label_lower == "neutral":
-            color = "#e6a817"
+            color = "#d7ba7d"
         else:
             color = "#888888"
 
         self.lbl_macro_label.setText(label.upper())
         self.lbl_macro_label.setStyleSheet(f"""
-            font-size: 18px; font-weight: bold; color: {color};
+            font-family: 'Segoe UI', 'Roboto', sans-serif;
+            font-size: 20px; font-weight: 800; color: {color};
         """)
         self.lbl_macro_conf.setText(f"Conf: {conf:.4f}")
 
@@ -690,22 +684,23 @@ class DashboardPage(QWidget):
         if micro and micro.lower() not in ('', 'n/a'):
             micro_lower = micro.lower()
             if micro_lower == 'positive':
-                micro_color = '#4caf50'
+                micro_color = '#6a9955'
             elif micro_lower == 'negative':
-                micro_color = '#e74c3c'
+                micro_color = '#d16969'
             else:
-                micro_color = '#aaa'
+                micro_color = '#aaaaaa'
             self.lbl_micro_label.setText(micro.upper())
             self.lbl_micro_label.setStyleSheet(f"""
-                font-size: 18px; font-weight: bold; color: {micro_color};
+                font-family: 'Segoe UI', 'Roboto', sans-serif;
+                font-size: 20px; font-weight: 800; color: {micro_color};
             """)
             self.lbl_micro_status.setText(f"Conf: {micro_conf:.4f}")
-            self.lbl_micro_status.setStyleSheet("font-family: Consolas; font-size: 12px; color: #888;")
+            self.lbl_micro_status.setStyleSheet("font-family: 'Consolas', monospace; font-size: 11px; color: #9e9e9e;")
         else:
             self.lbl_micro_label.setText("—")
-            self.lbl_micro_label.setStyleSheet("font-size: 18px; font-weight: bold; color: #444;")
+            self.lbl_micro_label.setStyleSheet("font-family: 'Segoe UI', sans-serif; font-size: 20px; font-weight: 800; color: #444444;")
             self.lbl_micro_status.setText("Not detected")
-            self.lbl_micro_status.setStyleSheet("font-family: Consolas; font-size: 12px; color: #555;")
+            self.lbl_micro_status.setStyleSheet("font-family: 'Consolas', monospace; font-size: 11px; color: #666666;")
             
         # Update ROI Visualization Cursor
         if hasattr(self, 'roi_vis'):
@@ -723,17 +718,14 @@ class DashboardPage(QWidget):
         scroll_bar = self.scroll_area.horizontalScrollBar()
         
         # 3. Hitung posisi X kursor dalam pixel
-        # Rumus: (posisi_sekarang / total_frame) * lebar_total_chart
         chart_width = self.playback_chart.width()
         cursor_x = (self.playback_chart.cursor_pos / self.playback_chart.total_frames) * chart_width
 
         # 4. Hitung posisi scroll agar kursor berada di tengah
-        # Rumus: PosisiKursor - (SetengahLebarAreaTampilan)
         viewport_width = self.scroll_area.viewport().width()
         target_scroll = cursor_x - (viewport_width / 2)
 
         # 5. Terapkan ke scroll bar
-        # setValue otomatis akan menangani batas minimum (0) dan maksimum
         scroll_bar.setValue(int(target_scroll))
 
     # ==================

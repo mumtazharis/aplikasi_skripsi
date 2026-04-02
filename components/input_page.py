@@ -74,7 +74,7 @@ class InputPage(QWidget):
         layout.addWidget(icon_label)
 
         text = QLabel("Select a video source from the panel\nor record directly from camera")
-        text.setStyleSheet("color: #666; font-size: 13px;")
+        text.setStyleSheet("color: #555555; font-family: 'Segoe UI', 'Roboto', sans-serif; font-size: 14px; font-weight: 600;")
         text.setAlignment(Qt.AlignCenter)
         layout.addWidget(text)
 
@@ -89,11 +89,11 @@ class InputPage(QWidget):
         # Source info header
         self.source_info_header = QLabel("")
         self.source_info_header.setStyleSheet("""
-            color: #999; font-size: 11px;
+            color: #858585; font-family: 'Consolas', monospace; font-size: 11px;
             padding: 6px 12px;
-            background-color: #232323;
-            border: 1px solid #3a3a3a;
-            border-radius: 3px;
+            background-color: #1e1e1e;
+            border: 1px solid #333333;
+            border-radius: 4px;
         """)
         layout.addWidget(self.source_info_header)
 
@@ -102,11 +102,12 @@ class InputPage(QWidget):
         self.preview_thumb.setAlignment(Qt.AlignCenter)
         self.preview_thumb.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.preview_thumb.setStyleSheet("""
-            background-color: #1e1e1e;
-            color: #555;
-            font-size: 13px;
-            border: 1px solid #3a3a3a;
-            border-radius: 3px;
+            background-color: #1a1a1a;
+            color: #555555;
+            font-family: 'Segoe UI', 'Roboto', sans-serif;
+            font-size: 14px;
+            font-weight: 600;
+            border: none;
         """)
         layout.addWidget(self.preview_thumb, 1)
 
@@ -117,37 +118,39 @@ class InputPage(QWidget):
         sidebar.setMinimumWidth(280)
         sidebar.setMaximumWidth(320)
         sidebar.setStyleSheet("""
-            QFrame { background-color: #2d2d2d; border: none; border-left: 1px solid #3a3a3a; }
-            QLabel { color: #ccc; font-size: 12px; }
+            QFrame { background-color: #252526; border: none; border-left: 1px solid #333333; }
+            QLabel { font-family: 'Segoe UI', 'Roboto', 'Helvetica Neue', sans-serif; color: #d4d4d4; font-size: 12px; }
         """)
 
         layout = QVBoxLayout(sidebar)
-        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(6)
 
         # Title
         title = QLabel("SOURCE INPUT")
         title.setStyleSheet("""
-            font-size: 11px; font-weight: bold; color: #2d8ceb;
-            letter-spacing: 2px;
+            font-family: 'Segoe UI', 'Roboto', sans-serif;
+            font-size: 13px; font-weight: 800; color: #4aa3f5;
+            letter-spacing: 1.5px; margin-bottom: 4px;
         """)
         layout.addWidget(title)
 
         # Description
         desc = QLabel("Select a video source to analyze")
-        desc.setStyleSheet("color: #777; font-size: 11px; margin-bottom: 6px;")
+        desc.setStyleSheet("font-family: 'Segoe UI', 'Roboto', sans-serif; color: #a0a0a0; font-size: 11px; margin-bottom: 6px;")
         desc.setWordWrap(True)
         layout.addWidget(desc)
 
-        # Button style — Adobe flat dark
+        # Button style
         btn_style = """
             QPushButton {
                 background-color: #383838; color: #e0e0e0;
-                border: 1px solid #4a4a4a; border-radius: 3px;
-                padding: 10px 12px; font-size: 12px;
+                border: 1px solid #4a4a4a; border-radius: 4px;
+                padding: 8px 12px; font-size: 12px;
+                font-family: 'Segoe UI', 'Roboto', sans-serif;
                 text-align: left;
             }
-            QPushButton:hover { background-color: #454545; border-color: #555; }
+            QPushButton:hover { background-color: #454545; }
             QPushButton:pressed { background-color: #505050; }
         """
 
@@ -188,12 +191,14 @@ class InputPage(QWidget):
         self.btn_start_predict = QPushButton("  Run Prediction")
         self.btn_start_predict.setStyleSheet("""
             QPushButton {
-                background-color: #2d8ceb; color: white;
-                border: none; border-radius: 3px;
-                padding: 12px; font-size: 12px; font-weight: bold;
+                background-color: #0e639c; color: #ffffff;
+                border: 1px solid #1177bb; border-radius: 4px;
+                padding: 8px; font-size: 12px; font-weight: 600;
+                font-family: 'Segoe UI', 'Roboto', sans-serif;
             }
-            QPushButton:hover { background-color: #4aa3f5; }
-            QPushButton:disabled { background-color: #1a3a5a; color: #556; }
+            QPushButton:hover { background-color: #1177bb; }
+            QPushButton:pressed { background-color: #094771; }
+            QPushButton:disabled { background-color: #1a3a5a; color: #555566; border: 1px solid #234b6e; }
         """)
         self.btn_start_predict.setEnabled(False)
         self.btn_start_predict.clicked.connect(self.start_prediction)
@@ -202,11 +207,13 @@ class InputPage(QWidget):
         self.btn_stop_predict = QPushButton("  Cancel")
         self.btn_stop_predict.setStyleSheet("""
             QPushButton {
-                background-color: #c0392b; color: white;
-                border: none; border-radius: 3px;
-                padding: 8px; font-size: 11px;
+                background-color: #c0392b; color: #ffffff;
+                border: 1px solid #d35400; border-radius: 4px;
+                padding: 8px; font-size: 12px; font-weight: 600;
+                font-family: 'Segoe UI', 'Roboto', sans-serif;
             }
-            QPushButton:hover { background-color: #e04838; }
+            QPushButton:hover { background-color: #e74c3c; }
+            QPushButton:pressed { background-color: #a53125; }
         """)
         self.btn_stop_predict.setVisible(False)
         self.btn_stop_predict.clicked.connect(self.stop_prediction)
@@ -217,29 +224,29 @@ class InputPage(QWidget):
         self.progress_bar.setVisible(False)
         self.progress_bar.setStyleSheet("""
             QProgressBar {
-                border: 1px solid #3a3a3a;
-                border-radius: 3px;
-                background-color: #232323;
+                border: 1px solid #333333;
+                border-radius: 4px;
+                background-color: #1e1e1e;
                 text-align: center;
-                color: #ccc;
+                color: #d4d4d4;
+                font-family: 'Segoe UI', 'Roboto', sans-serif;
                 font-size: 10px;
                 height: 20px;
             }
             QProgressBar::chunk {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #1a5a9e, stop:1 #2d8ceb);
-                border-radius: 2px;
+                background-color: #0e639c;
+                border-radius: 3px;
             }
         """)
         layout.addWidget(self.progress_bar)
 
         self.lbl_status = QLabel("")
-        self.lbl_status.setStyleSheet("color: #888; font-size: 10px;")
+        self.lbl_status.setStyleSheet("color: #a0a0a0; font-family: 'Consolas', monospace; font-size: 11px;")
         self.lbl_status.setWordWrap(True)
         layout.addWidget(self.lbl_status)
 
         self.lbl_time_elapsed = QLabel("")
-        self.lbl_time_elapsed.setStyleSheet("color: #888; font-size: 10px; font-weight: bold;")
+        self.lbl_time_elapsed.setStyleSheet("color: #a0a0a0; font-family: 'Consolas', monospace; font-size: 11px;")
         self.lbl_time_elapsed.setVisible(False)
         layout.addWidget(self.lbl_time_elapsed)
 
@@ -247,11 +254,12 @@ class InputPage(QWidget):
         self.btn_open_dashboard = QPushButton("  View Results in Analysis")
         self.btn_open_dashboard.setStyleSheet("""
             QPushButton {
-                background-color: #383838; color: #2d8ceb;
-                border: 1px solid #2d8ceb; border-radius: 3px;
-                padding: 10px; font-size: 12px; font-weight: bold;
+                background-color: transparent; color: #4aa3f5;
+                border: 1px solid #4aa3f5; border-radius: 4px;
+                padding: 8px; font-size: 12px; font-weight: 600;
+                font-family: 'Segoe UI', 'Roboto', sans-serif;
             }
-            QPushButton:hover { background-color: #2d8ceb; color: white; }
+            QPushButton:hover { background-color: #4aa3f5; color: #ffffff; }
         """)
         self.btn_open_dashboard.setVisible(False)
         layout.addWidget(self.btn_open_dashboard)
@@ -262,14 +270,15 @@ class InputPage(QWidget):
     def _add_separator(self, layout):
         sep = QFrame()
         sep.setFrameShape(QFrame.HLine)
-        sep.setStyleSheet("background-color: #3a3a3a; max-height: 1px; margin-top: 4px; margin-bottom: 2px;")
+        sep.setStyleSheet("background-color: #333333; max-height: 1px; margin-top: 8px; margin-bottom: 4px;")
         layout.addWidget(sep)
 
     def _add_section_title(self, layout, text):
         lbl = QLabel(text)
         lbl.setStyleSheet("""
-            font-size: 10px; font-weight: bold; color: #999;
-            letter-spacing: 2px; margin-top: 2px;
+            font-family: 'Segoe UI', 'Roboto', sans-serif;
+            font-size: 10px; font-weight: 700; color: #858585;
+            letter-spacing: 1.5px; margin-top: 4px; margin-bottom: 2px;
         """)
         layout.addWidget(lbl)
 
