@@ -281,6 +281,7 @@ class PredictionWorker(QThread):
                     cap.release()
 
             # Write CSV
+            annotations = {}
             with open(csv_path, "w", newline="", encoding="utf-8") as csvfile:
                 writer = csv.writer(csvfile)
                 writer.writerow([
@@ -326,26 +327,74 @@ class PredictionWorker(QThread):
                         face_x1, face_y1, face_x2, face_y2,
                     ])
 
-            # ============================================
-            # CONVERT FOLDER → VIDEO (jika sumber folder)
-            # ============================================
-            video_source = self.source_path
-            is_folder_meta = self.is_folder
+                    annotations[raw_idx] = {
+                        "macro_label": macro_class,
+                        "macro_conf": macro_conf,
+                        "micro_label": micro_label,
+                        "face_x1": face_x1,
+                        "face_y1": face_y1,
+                        "face_x2": face_x2,
+                        "face_y2": face_y2,
+                    }
 
-            if self.is_folder:
-                self.status.emit("Mengonversi frame ke video...")
-                video_path = self._convert_folder_to_video(csv_path)
-                if video_path:
-                    video_source = video_path
-                    is_folder_meta = False
+            # ============================================
+            # GENERATE ANNOTATED VIDEO
+            # ============================================
+            self.status.emit("Membuat video hasil (annotated)...")
+            video_path = csv_path.replace(".csv", "_annotated.avi")
+            h, w = raw_frames_bgr[0].shape[:2]
+            fourcc = cv2.VideoWriter_fourcc(*'MJPG')
+            writer_vid = cv2.VideoWriter(video_path, fourcc, fps_val, (w, h))
+
+            total_raw = len(raw_frames_bgr)
+            for i, frame_bgr in enumerate(raw_frames_bgr):
+                if not self.running:
+                    writer_vid.release()
+                    return
+                
+                out_frame = frame_bgr.copy()
+                ann = annotations.get(i)
+                if ann:
+                    x1, y1 = ann["face_x1"], ann["face_y1"]
+                    x2, y2 = ann["face_x2"], ann["face_y2"]
+                    if x1 > 0 or y1 > 0 or x2 > 0 or y2 > 0:
+                        label = ann["macro_label"]
+                        label_lower = label.lower()
+                        if label_lower == "positive":
+                            color = (80, 175, 76)  # BGR green
+                        elif label_lower == "negative":
+                            color = (60, 76, 231)  # BGR red
+                        elif label_lower == "neutral":
+                            color = (23, 168, 230) # BGR amber
+                        else:
+                            color = (136, 136, 136)
+
+                        cv2.rectangle(out_frame, (x1, y1), (x2, y2), color, 2)
+                        
+                        display_text = f"{label} ({ann['macro_conf']:.2f})"
+                        micro = ann["micro_label"]
+                        if micro and micro.lower() not in ('', 'n/a'):
+                            display_text += f" | Micro: {micro}"
+                            
+                        cv2.putText(
+                            out_frame, display_text,
+                            (x1, y1 - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2
+                        )
+                
+                writer_vid.write(out_frame)
+                
+                if i % 10 == 0:
+                    self.status.emit(f"Menyimpan video... {i + 1}/{total_raw}")
+            
+            writer_vid.release()
 
             # Save metadata
             with open(meta_path, "w", encoding="utf-8") as f:
-                f.write(f"source={video_source}\n")
-                f.write(f"is_folder={is_folder_meta}\n")
+                f.write(f"source={video_path}\n")
+                f.write(f"is_folder=False\n")
                 f.write(f"fps={fps_val}\n")
-                f.write(f"width={vid_width}\n")
-                f.write(f"height={vid_height}\n")
+                f.write(f"width={w}\n")
+                f.write(f"height={h}\n")
 
             self.status.emit("Prediksi selesai!")
             self.finished.emit(csv_path)
@@ -400,55 +449,3 @@ class PredictionWorker(QThread):
 
         return frames
 
-    # ==========================================
-    # HELPER: CONVERT FOLDER TO VIDEO
-    # ==========================================
-    def _convert_folder_to_video(self, csv_path):
-        """Konversi folder frame ke video .avi untuk playback ringan."""
-        valid_ext = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
-        raw_files = [
-            f for f in os.listdir(self.source_path)
-            if os.path.splitext(f)[1].lower() in valid_ext
-        ]
-        files = sorted(raw_files, key=lambda x: int(''.join(filter(str.isdigit, x)) or 0))
-
-        if not files:
-            return None
-
-        # Read first frame for dimensions
-        first = cv2.imread(os.path.join(self.source_path, files[0]))
-        if first is None:
-            return None
-
-        height, width = first.shape[:2]
-        video_path = csv_path.replace(".csv", ".avi")
-
-        fourcc = cv2.VideoWriter_fourcc(*'MJPG')
-        writer = cv2.VideoWriter(video_path, fourcc, 30.0, (width, height))
-
-        if not writer.isOpened():
-            return None
-
-        total = len(files)
-        for idx, fname in enumerate(files):
-            if not self.running:
-                writer.release()
-                if os.path.exists(video_path):
-                    os.remove(video_path)
-                return None
-
-            frame = cv2.imread(os.path.join(self.source_path, fname))
-            if frame is None:
-                frame = np.zeros((height, width, 3), dtype=np.uint8)
-
-            fh, fw = frame.shape[:2]
-            if fw != width or fh != height:
-                frame = cv2.resize(frame, (width, height))
-
-            writer.write(frame)
-
-            if idx % 10 == 0:
-                self.status.emit(f"Konversi video... {idx + 1}/{total}")
-
-        writer.release()
-        return video_path

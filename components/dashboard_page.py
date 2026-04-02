@@ -209,7 +209,7 @@ class DashboardPage(QWidget):
     def _create_sidebar(self):
         sidebar = QFrame()
         sidebar.setMinimumWidth(280)
-        sidebar.setMaximumWidth(340)
+        sidebar.setMaximumWidth(320)
         sidebar.setStyleSheet("""
             QFrame { background-color: #2d2d2d; border: none; border-left: 1px solid #3a3a3a; }
             QLabel { color: #ccc; font-size: 11px; }
@@ -554,35 +554,6 @@ class DashboardPage(QWidget):
         self._update_current_prediction(frame_idx)
 
     def _on_playback_frame(self, frame_rgb, frame_idx):
-        if 0 <= frame_idx < len(self.csv_data):
-            row = self.csv_data[frame_idx]
-            x1, y1 = row["face_x1"], row["face_y1"]
-            x2, y2 = row["face_x2"], row["face_y2"]
-
-            if x1 > 0 or y1 > 0 or x2 > 0 or y2 > 0:
-                label = row["macro_label"]
-                label_lower = label.lower()
-                if label_lower == "positive":
-                    color = (76, 175, 80)    # green RGB
-                elif label_lower == "negative":
-                    color = (231, 76, 60)    # red RGB
-                elif label_lower == "neutral":
-                    color = (230, 168, 23)   # amber RGB
-                else:
-                    color = (136, 136, 136)
-
-                cv2.rectangle(frame_rgb, (x1, y1), (x2, y2), color, 2)
-
-                display_text = f"{label} ({row['macro_confidence']:.2f})"
-                micro = row.get('micro_label', '').strip()
-                if micro and micro.lower() not in ('', 'n/a'):
-                    display_text += f" | Micro: {micro}"
-
-                cv2.putText(
-                    frame_rgb, display_text,
-                    (x1, y1 - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2
-                )
-
         h, w, ch = frame_rgb.shape
         bpl = ch * w
         image = QImage(frame_rgb.data, w, h, bpl, QImage.Format_RGB888)

@@ -54,7 +54,7 @@ NAV_BUTTON_STYLE = """
         color: {text_secondary};
         border: none;
         border-bottom: 2px solid transparent;
-        padding: 10px 20px;
+        padding: 0px 10px;
         font-size: 12px;
         font-weight: bold;
         letter-spacing: 1px;
@@ -71,7 +71,7 @@ NAV_BUTTON_ACTIVE_STYLE = """
         color: {accent};
         border: none;
         border-bottom: 2px solid {accent};
-        padding: 10px 20px;
+        padding: 0px 10px;
         font-size: 12px;
         font-weight: bold;
         letter-spacing: 1px;

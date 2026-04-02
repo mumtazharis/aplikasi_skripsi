@@ -27,29 +27,21 @@ class MainWindow(QWidget):
         # ====== NAVIGATION BAR ======
         nav_bar = QFrame()
         nav_bar.setObjectName("navBar")
-        nav_bar.setFixedHeight(44)
+        nav_bar.setFixedHeight(28) 
         nav_bar.setStyleSheet(NAV_BAR_STYLE)
 
         nav_layout = QHBoxLayout(nav_bar)
-        nav_layout.setContentsMargins(16, 0, 16, 0)
+        nav_layout.setContentsMargins(0, 0, 16, 0)
         nav_layout.setSpacing(0)
 
-        # App title
-        app_title = QLabel("EXPRESSION ANALYZER")
-        app_title.setObjectName("appTitle")
-        nav_layout.addWidget(app_title)
-
-        nav_layout.addSpacing(30)
-
-        # Navigation buttons (English, no emoji)
-        self.btn_input = QPushButton("INPUT & PREDICT")
-        self.btn_input.setFixedHeight(44)
+        self.btn_input = QPushButton("Input")
+        self.btn_input.setFixedHeight(28) 
         self.btn_input.setCursor(Qt.PointingHandCursor)
         self.btn_input.clicked.connect(lambda: self.switch_page(0))
         nav_layout.addWidget(self.btn_input)
 
-        self.btn_dashboard = QPushButton("ANALYSIS")
-        self.btn_dashboard.setFixedHeight(44)
+        self.btn_dashboard = QPushButton("Analysis")
+        self.btn_dashboard.setFixedHeight(28)
         self.btn_dashboard.setCursor(Qt.PointingHandCursor)
         self.btn_dashboard.clicked.connect(lambda: self.switch_page(1))
         nav_layout.addWidget(self.btn_dashboard)
