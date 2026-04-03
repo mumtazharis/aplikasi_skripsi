@@ -26,8 +26,9 @@ splash = Splash(
     'assets/splash.png',
     binaries=a.binaries,
     datas=a.datas,
-    text_pos=None,
-    text_size=12,
+    text_pos=(20, 280),
+    text_size=8,
+    text_color='#5cdee5',
     minify_script=True,
     always_on_top=True,
 )

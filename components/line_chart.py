@@ -2,7 +2,7 @@ from collections import deque
 from PySide6.QtWidgets import QWidget
 from PySide6.QtCore import Qt, QPointF
 from PySide6.QtGui import (
-    QPainter, QColor, QPen, QBrush, 
+    QPainter, QColor, QPen, 
     QPolygonF
 )
 

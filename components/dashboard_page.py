@@ -3,10 +3,9 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QFileDialog, QSlider, QComboBox, QSizePolicy, QScrollArea
 )
-from PySide6.QtCore import Qt, Signal, QSettings
+from PySide6.QtCore import Qt, QSettings
 from utils.resource_path import resource_path
-from PySide6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QIcon
-import cv2
+from PySide6.QtGui import QImage, QPixmap, QIcon
 
 from components.roi_linechart import RoiLineChartWidget
 from components.playback_chart import PlaybackChart

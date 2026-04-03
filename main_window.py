@@ -1,26 +1,61 @@
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QStackedWidget,
-    QPushButton, QFrame, QLabel
+    QPushButton, QFrame
 )
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QIcon
+# Import dari library qframelesswindow
+from qframelesswindow import FramelessWindow, StandardTitleBar
 
 from components.input_page import InputPage
 from components.dashboard_page import DashboardPage
 from styles import NAV_BAR_STYLE, NAV_BUTTON_STYLE, NAV_BUTTON_ACTIVE_STYLE, MAIN_WINDOW_STYLE
+from utils.resource_path import resource_path
 
-
-class MainWindow(QWidget):
+class MainWindow(FramelessWindow): # Ubah turunan QWidget menjadi FramelessWindow
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Expression Analyzer")
+        
         self.setObjectName("mainWindow")
         self.resize(1200, 700)
         self.setStyleSheet(MAIN_WINDOW_STYLE)
 
+        self.setTitleBar(StandardTitleBar(self))
+        self.setWindowTitle("Expression Analyzer")
+        self.titleBar.titleLabel.setText("Expression Analyzer")
+        self.setWindowIcon(QIcon(resource_path("assets/icon.png"))) 
+        self.titleBar.setIcon(QIcon(resource_path("assets/icon.png")))
+        
+        self.titleBar.titleLabel.setStyleSheet("""
+            QLabel {
+                color: #999999; 
+                font-family: 'Segoe UI', 'Roboto', sans-serif;
+                font-weight: bold; 
+                font-size: 12px; 
+                padding: 0px 10px;
+            }
+        """)
+
+        self.titleBar.minBtn.setNormalColor(QColor(153, 153, 153))
+        self.titleBar.maxBtn.setNormalColor(QColor(153, 153, 153))
+        self.titleBar.closeBtn.setNormalColor(QColor(153, 153, 153))
+        
+        self.titleBar.minBtn.setHoverColor(QColor(153, 153, 153))
+        self.titleBar.minBtn.setHoverBackgroundColor(QColor(69, 69, 69))
+        self.titleBar.maxBtn.setHoverColor(QColor(153, 153, 153))
+        self.titleBar.maxBtn.setHoverBackgroundColor(QColor(69, 69, 69))
+        self.titleBar.closeBtn.setHoverColor(QColor(153, 153, 153))
+        self.titleBar.closeBtn.setHoverBackgroundColor(QColor(232, 17, 35))
+
         self.setup_ui()
 
     def setup_ui(self):
-        main_layout = QVBoxLayout(self)
+        # ====== 2. SETUP LAYOUT KONTEN UTAMA ======
+        # Karena title bar menempel di atas, kita buat container untuk konten di bawahnya
+        self.central_widget = QWidget(self)
+        self.central_widget.setObjectName("centralWidget")
+        
+        main_layout = QVBoxLayout(self.central_widget)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
@@ -64,6 +99,13 @@ class MainWindow(QWidget):
         self.page_stack.addWidget(self.dashboard_page)
 
         main_layout.addWidget(self.page_stack)
+
+        # ====== 3. SUSUN KE WINDOW UTAMA ======
+        # Susun central widget di bawah title bar
+        window_layout = QVBoxLayout(self)
+        # Berikan margin atas sebesar tinggi title bar agar tidak saling tindih
+        window_layout.setContentsMargins(0, self.titleBar.height(), 0, 0) 
+        window_layout.addWidget(self.central_widget)
 
         # Set initial page
         self.current_page = 0
