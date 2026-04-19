@@ -31,7 +31,7 @@ from utils.resource_path import resource_path
 # ==========================================
 # 1. KONFIGURASI & KONSTANTA
 # ==========================================
-MICRO_WEIGHTS_PATH = resource_path("models/final_mer_model_9ch.pth")
+MICRO_WEIGHTS_PATH = resource_path("models/new_final_mer_model_9ch.pth")
 MACRO_WEIGHTS_PATH = resource_path("models/macro_mobilenet_3class.pth")
 
 MICRO_CLASSES = ['Negative', 'Positive']
@@ -180,15 +180,21 @@ def detect_face(image_rgb, face_mesh):
             int(np.max(points[:, 1]) - np.min(points[:, 1])))
 
 
-def detect_eye_positions(image_rgb, face_mesh):
-    results = face_mesh.process(image_rgb)
-    if not results.multi_face_landmarks:
-        return None, None
-    landmarks = results.multi_face_landmarks[0].landmark
+def detect_eye_positions_and_blink(image_rgb, landmarks):
+    """Detect eye positions using stable canthus points and compute blink status."""
     h, w, _ = image_rgb.shape
-    left_eye = np.mean([[landmarks[i].x * w, landmarks[i].y * h] for i in LEFT_EYE_IDX], axis=0)
-    right_eye = np.mean([[landmarks[i].x * w, landmarks[i].y * h] for i in RIGHT_EYE_IDX], axis=0)
-    return left_eye, right_eye
+
+    # Gunakan HANYA sudut mata (canthus) yang stabil untuk alignment
+    # Kiri: 33 (outer), 133 (inner) | Kanan: 362 (inner), 263 (outer)
+    left_eye = np.mean([[landmarks.landmark[i].x * w, landmarks.landmark[i].y * h] for i in [33, 133]], axis=0)
+    right_eye = np.mean([[landmarks.landmark[i].x * w, landmarks.landmark[i].y * h] for i in [362, 263]], axis=0)
+
+    # Hitung EAR untuk deteksi kedipan langsung
+    ear_left = compute_ear(landmarks, EAR_LEFT_EYE)
+    ear_right = compute_ear(landmarks, EAR_RIGHT_EYE)
+    is_blinking = (ear_left < BLINK_THRESHOLD) or (ear_right < BLINK_THRESHOLD)
+
+    return left_eye, right_eye, is_blinking
 
 
 def compute_ear(landmarks, eye_indices):
@@ -222,60 +228,92 @@ def get_square_box(box, img_shape, margin=0.15):
 
 
 def align_and_crop_face(bgr_img, face_mesh, target_size=(320, 320),
-                         enable_align=True, smooth_state=None, alpha=0.15):
+                         enable_align=True, smooth_state=None, alpha=0.15, alpha_size=0.02):
     """Align wajah dan crop ke target_size. Return (cropped_bgr, smooth_state)."""
     if bgr_img is None:
         return None, smooth_state
     if smooth_state is None:
-        smooth_state = {'angle': 0.0, 'center': None, 'box': None}
+        smooth_state = {'angle': 0.0, 'center': None, 'box': None, 'is_blinking': False}
 
     rgb_img = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2RGB)
 
+    results = face_mesh.process(rgb_img)
+    if not results.multi_face_landmarks:
+        return None, smooth_state
+    landmarks = results.multi_face_landmarks[0]
+
     if enable_align:
-        left_eye, right_eye = detect_eye_positions(rgb_img, face_mesh)
-        if left_eye is None or right_eye is None:
-            return None, smooth_state
+        left_eye, right_eye, is_blinking = detect_eye_positions_and_blink(rgb_img, landmarks)
+        smooth_state['is_blinking'] = is_blinking 
+        
         dx, dy = right_eye[0] - left_eye[0], right_eye[1] - left_eye[1]
         raw_angle = np.degrees(np.arctan2(dy, dx))
         raw_center = ((left_eye[0] + right_eye[0]) / 2, (left_eye[1] + right_eye[1]) / 2)
-        if smooth_state['box'] is None:
+        
+        if smooth_state['center'] is None: 
             smooth_state['angle'], smooth_state['center'] = raw_angle, raw_center
         else:
-            smooth_state['angle'] = (alpha * raw_angle) + ((1 - alpha) * smooth_state['angle'])
-            smooth_state['center'] = (
-                (alpha * raw_center[0]) + ((1 - alpha) * smooth_state['center'][0]),
-                (alpha * raw_center[1]) + ((1 - alpha) * smooth_state['center'][1])
-            )
+            if not is_blinking:
+                smooth_state['angle'] = (alpha * raw_angle) + ((1 - alpha) * smooth_state['angle'])
+                smooth_state['center'] = (
+                    (alpha * raw_center[0]) + ((1 - alpha) * smooth_state['center'][0]),
+                    (alpha * raw_center[1]) + ((1 - alpha) * smooth_state['center'][1])
+                )
+            
         h, w = bgr_img.shape[:2]
         M = cv2.getRotationMatrix2D(smooth_state['center'], smooth_state['angle'], 1.0)
-        processed_bgr = cv2.warpAffine(bgr_img, M, (w, h),
-                                        flags=cv2.INTER_CUBIC,
-                                        borderMode=cv2.BORDER_REPLICATE)
+        processed_bgr = cv2.warpAffine(bgr_img, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
     else:
         processed_bgr = bgr_img.copy()
+        smooth_state['is_blinking'] = False
 
-    face_box = detect_face(cv2.cvtColor(processed_bgr, cv2.COLOR_BGR2RGB), face_mesh)
-    if face_box is None:
+    # Ekstrak face_box dari gambar hasil rotasi
+    rotated_results = face_mesh.process(cv2.cvtColor(processed_bgr, cv2.COLOR_BGR2RGB))
+    if rotated_results.multi_face_landmarks:
+        rot_lms = rotated_results.multi_face_landmarks[0]
+        h_rot, w_rot = processed_bgr.shape[:2]
+        rot_points = np.array([(lm.x * w_rot, lm.y * h_rot) for lm in rot_lms.landmark])
+        
+        # Bounding box mentah frame ini
+        face_box = (int(np.min(rot_points[:, 0])), int(np.min(rot_points[:, 1])), 
+                    int(np.max(rot_points[:, 0]) - np.min(rot_points[:, 0])), 
+                    int(np.max(rot_points[:, 1]) - np.min(rot_points[:, 1])))
+    else:
         return None, smooth_state
-
+    
     if smooth_state['box'] is None:
         smooth_state['box'] = face_box
     else:
-        x, y, w, h = face_box
-        px, py, pw, ph = smooth_state['box']
-        smooth_state['box'] = (
-            int(alpha * x + (1 - alpha) * px),
-            int(alpha * y + (1 - alpha) * py),
-            int(alpha * w + (1 - alpha) * pw),
-            int(alpha * h + (1 - alpha) * ph)
-        )
-
+        if not smooth_state['is_blinking']:
+            x, y, w_box, h_box = face_box
+            px, py, pw, ph = smooth_state['box']
+            
+            # 1. DECOUPLE UKURAN (W, H): Gunakan alpha_size yang sangat kecil agar skala stabil
+            new_w = (alpha_size * w_box) + ((1 - alpha_size) * pw)
+            new_h = (alpha_size * h_box) + ((1 - alpha_size) * ph)
+            
+            # 2. DECOUPLE POSISI: Hitung titik tengah wajah saat ini dan titik tengah sebelumnya
+            curr_cx = x + (w_box / 2.0)
+            curr_cy = y + (h_box / 2.0)
+            
+            prev_cx = px + (pw / 2.0)
+            prev_cy = py + (ph / 2.0)
+            
+            # Gunakan alpha normal untuk mengejar pergerakan kepala (translasi)
+            new_cx = (alpha * curr_cx) + ((1 - alpha) * prev_cx)
+            new_cy = (alpha * curr_cy) + ((1 - alpha) * prev_cy)
+            
+            # Konversi kembali center dan ukuran menjadi koordinat pojok kiri atas (x, y)
+            new_x = int(new_cx - (new_w / 2.0))
+            new_y = int(new_cy - (new_h / 2.0))
+            
+            smooth_state['box'] = (new_x, new_y, int(new_w), int(new_h))
+    
     sq_x, sq_y, sq_w, sq_h = get_square_box(smooth_state['box'], processed_bgr.shape, margin=0.15)
     cropped = processed_bgr[sq_y:sq_y + sq_h, sq_x:sq_x + sq_w]
-    if cropped.size == 0:
-        return None, smooth_state
+    if cropped.size == 0: return None, smooth_state
+    
     return cv2.resize(cropped, target_size, interpolation=cv2.INTER_AREA), smooth_state
-
 
 # ==========================================
 # 4. HELPER FUNCTIONS: OPTICAL FLOW & STRAIN
@@ -427,7 +465,7 @@ def extract_regions_preserved(strain_img, landmarks, img_w, img_h):
 # 5. SPOTTER FUNCTIONS
 # ==========================================
 def calculate_accumulated_flow_energy(frames_bgr, face_mesh, raft_model, device, transforms_raft,
-                                       drift_decay=0.96, motion_threshold=0.2, blink_pad=3,
+                                       drift_decay=0.96, motion_threshold=0.1, blink_pad=3,
                                        progress_callback=None):
     """
     Calculate accumulated flow energy for micro-expression spotting.
