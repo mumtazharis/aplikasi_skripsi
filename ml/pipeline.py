@@ -8,7 +8,7 @@ Pipeline:
 1. Face Alignment 320x320 (MediaPipe + smoothing)
 2. Macro: MobileNetV2 per-frame
 3. Micro Spotting: RAFT Optical Flow + Accumulated Energy
-4. Micro Classification: CNN+Transformer on Optical Strain
+4. Micro Classification: BiLSTM+Attention on Enriched Flow Time-Series
 """
 
 import os
@@ -21,6 +21,7 @@ import torchvision.transforms as tv_transforms
 from torchvision import models
 from torchvision.models.optical_flow import raft_large, Raft_Large_Weights
 import mediapipe as mp
+from torch.nn.utils.rnn import pad_sequence, pack_padded_sequence, pad_packed_sequence
 from scipy.signal import find_peaks
 import warnings
 
@@ -31,7 +32,7 @@ from utils.resource_path import resource_path
 # ==========================================
 # 1. KONFIGURASI & KONSTANTA
 # ==========================================
-MICRO_WEIGHTS_PATH = resource_path("models/new_final_mer_model_9ch.pth")
+MICRO_WEIGHTS_PATH = resource_path("models/final_lstm_flow_model.pth")
 MACRO_WEIGHTS_PATH = resource_path("models/macro_mobilenet_3class.pth")
 
 MICRO_CLASSES = ['Negative', 'Positive']
@@ -85,84 +86,106 @@ ROI_ORDER = [
 
 
 # ==========================================
-# 2. MICRO MODEL ARCHITECTURE
+# 2. MICRO MODEL ARCHITECTURE (BiLSTM + Attention)
 # ==========================================
-NUM_REGIONS_MICRO = 9
-PROJECTION_DIM = 64
-NUM_HEADS = 4
-TRANSFORMER_LAYERS = 4
+# Default config — akan di-override dari checkpoint saat load
+LSTM_INPUT_DIM = 63       # 9 ROI × 7 features
+LSTM_HIDDEN_DIM = 128
+LSTM_NUM_LAYERS = 4
+LSTM_BIDIRECTIONAL = True
+LSTM_DROPOUT_LSTM = 0.3
+LSTM_DROPOUT_FC = 0.5
+MAX_SEQ_LEN = 60
 
 
-class CNNBackbone(nn.Module):
-    def __init__(self, in_channels=1, proj_dim=PROJECTION_DIM):
+class LSTMClassifier(nn.Module):
+    """
+    Bidirectional LSTM untuk klasifikasi time-series flow.
+    Architecture:
+    - LayerNorm pada input
+    - Multi-layer Bidirectional LSTM
+    - Attention pooling
+    - Fully connected classifier dengan dropout
+    """
+
+    def __init__(self, input_dim=LSTM_INPUT_DIM, hidden_dim=LSTM_HIDDEN_DIM,
+                 num_layers=LSTM_NUM_LAYERS, num_classes=2,
+                 bidirectional=LSTM_BIDIRECTIONAL,
+                 dropout_lstm=LSTM_DROPOUT_LSTM, dropout_fc=LSTM_DROPOUT_FC):
         super().__init__()
-        self.conv1 = nn.Conv2d(in_channels, 32, kernel_size=3, padding=1)
-        self.bn1 = nn.BatchNorm2d(32)
-        self.pool1 = nn.MaxPool2d(2)
 
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
-        self.bn2 = nn.BatchNorm2d(64)
-        self.pool2 = nn.MaxPool2d(2)
+        self.hidden_dim = hidden_dim
+        self.num_layers = num_layers
+        self.bidirectional = bidirectional
+        self.num_directions = 2 if bidirectional else 1
 
-        self.conv3 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
-        self.bn3 = nn.BatchNorm2d(128)
-        self.gap = nn.AdaptiveAvgPool2d((1, 1))
+        # Input normalization
+        self.input_norm = nn.LayerNorm(input_dim)
 
-        self.fc = nn.Linear(128, proj_dim)
-        self.dropout = nn.Dropout(0.3)
-
-    def forward(self, x):
-        x = self.pool1(F.relu(self.bn1(self.conv1(x))))
-        x = self.pool2(F.relu(self.bn2(self.conv2(x))))
-        x = self.gap(F.relu(self.bn3(self.conv3(x))))
-        x = torch.flatten(x, 1)
-        x = self.dropout(F.relu(self.fc(x)))
-        return x
-
-
-class PositionalEmbedding(nn.Module):
-    def __init__(self, num_regions, proj_dim):
-        super().__init__()
-        self.pos_emb = nn.Parameter(torch.randn(1, num_regions, proj_dim))
-
-    def forward(self, x):
-        return x + self.pos_emb
-
-
-class CNNTransformerModel(nn.Module):
-    def __init__(self, num_classes=2):
-        super().__init__()
-        self.cnn = CNNBackbone(proj_dim=PROJECTION_DIM)
-        self.pos_emb = PositionalEmbedding(NUM_REGIONS_MICRO, PROJECTION_DIM)
-
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=PROJECTION_DIM,
-            nhead=NUM_HEADS,
-            dim_feedforward=PROJECTION_DIM * 2,
-            dropout=0.1,
+        # LSTM
+        self.lstm = nn.LSTM(
+            input_size=input_dim,
+            hidden_size=hidden_dim,
+            num_layers=num_layers,
             batch_first=True,
-            norm_first=True
+            bidirectional=bidirectional,
+            dropout=dropout_lstm if num_layers > 1 else 0.0
         )
-        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=TRANSFORMER_LAYERS)
 
-        self.classifier_dropout = nn.Dropout(0.4)
-        self.fc1 = nn.Linear(PROJECTION_DIM, 64)
-        self.fc2 = nn.Linear(64, num_classes)
+        lstm_output_dim = hidden_dim * self.num_directions
 
-    def forward(self, x):
-        B, N, C, H, W = x.shape
-        x = x.view(B * N, C, H, W)
-        features = self.cnn(x)
-        features = features.view(B, N, -1)
+        # Attention mechanism
+        self.attention = nn.Sequential(
+            nn.Linear(lstm_output_dim, lstm_output_dim // 2),
+            nn.Tanh(),
+            nn.Linear(lstm_output_dim // 2, 1, bias=False)
+        )
 
-        x = self.pos_emb(features)
-        x = self.transformer(x)
-        x = x.mean(dim=1)
+        # Classifier
+        self.classifier = nn.Sequential(
+            nn.LayerNorm(lstm_output_dim),
+            nn.Dropout(dropout_fc),
+            nn.Linear(lstm_output_dim, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(dropout_fc * 0.5),
+            nn.Linear(hidden_dim, num_classes)
+        )
 
-        x = self.classifier_dropout(x)
-        x = F.relu(self.fc1(x))
-        out = self.fc2(x)
-        return out
+    def forward(self, x, lengths):
+        """
+        Args:
+            x: (batch, max_seq_len, input_dim) — padded sequences
+            lengths: (batch,) — actual lengths
+        Returns:
+            logits: (batch, num_classes)
+        """
+        # Input normalization
+        x = self.input_norm(x)
+
+        # Pack padded sequence
+        packed = pack_padded_sequence(x, lengths.cpu(), batch_first=True, enforce_sorted=True)
+
+        # LSTM forward
+        packed_output, (h_n, c_n) = self.lstm(packed)
+
+        # Unpack
+        lstm_output, _ = pad_packed_sequence(packed_output, batch_first=True)
+
+        # Attention pooling (mask padded positions)
+        attn_weights = self.attention(lstm_output).squeeze(-1)
+
+        # Create mask for padded positions
+        max_len = lstm_output.size(1)
+        mask = torch.arange(max_len, device=x.device).unsqueeze(0) < lengths.unsqueeze(1)
+        attn_weights = attn_weights.masked_fill(~mask, float('-inf'))
+        attn_weights = F.softmax(attn_weights, dim=1)
+
+        # Weighted sum
+        context = torch.bmm(attn_weights.unsqueeze(1), lstm_output).squeeze(1)
+
+        # Classify
+        logits = self.classifier(context)
+        return logits
 
 
 # ==========================================
@@ -382,21 +405,20 @@ def get_roi_dominant_flow(flow, landmarks, img_w, img_h):
     return roi_flows
 
 
-def compute_optical_strain(onset_bgr, apex_bgr, landmarks, raft_model, device, transforms_raft):
-    """Compute optical strain between onset and apex frames."""
-    flow = compute_optical_flow(onset_bgr, apex_bgr, raft_model, device, transforms_raft)
-
-    h, w = onset_bgr.shape[:2]
-    pts = np.array([[int(landmarks.landmark[i].x * w),
-                     int(landmarks.landmark[i].y * h)] for i in [168, 193, 195, 417]])
+def compute_strain_from_flow(flow, landmarks, img_w, img_h):
+    """
+    Hitung optical strain dari flow array, dengan kompensasi pangkal hidung.
+    Sama dengan generator.py — menerima flow langsung (tanpa compute RAFT ulang).
+    """
+    nose_indices = SPOTTER_ROI_INDICES["area_pangkal_hidung"]
+    pts = np.array([[int(landmarks.landmark[i].x * img_w),
+                     int(landmarks.landmark[i].y * img_h)] for i in nose_indices])
     x_min, y_min = np.min(pts, axis=0)
     x_max, y_max = np.max(pts, axis=0)
-
     x_min, y_min = max(0, x_min), max(0, y_min)
-    x_max, y_max = min(w, x_max), min(h, y_max)
+    x_max, y_max = min(img_w, x_max), min(img_h, y_max)
 
     crop_flow = flow[y_min:y_max, x_min:x_max]
-
     global_du = get_dominant_movement(crop_flow[..., 0])
     global_dv = get_dominant_movement(crop_flow[..., 1])
 
@@ -411,8 +433,115 @@ def compute_optical_strain(onset_bgr, apex_bgr, landmarks, raft_model, device, t
     exx, eyy = ux, vy
     exy = 0.5 * (uy + vx)
     strain = np.sqrt(exx ** 2 + eyy ** 2 + 2 * exy ** 2)
-
     return strain.astype(np.float32)
+
+
+def get_roi_enriched_flow(flow, landmarks, img_w, img_h):
+    """
+    Mengekstrak arah gerakan (u, v) dominan beserta std untuk setiap ROI.
+    Digunakan oleh micro classification (bukan spotter).
+    Menggunakan SPOTTER_ROI_INDICES (yang mencakup semua ROI termasuk pangkal hidung).
+    Return dict {name: (du, dv, std_u, std_v)} untuk semua ROI.
+    """
+    roi_flows = {}
+    for name, indices in SPOTTER_ROI_INDICES.items():
+        pts = np.array([[int(landmarks.landmark[i].x * img_w),
+                         int(landmarks.landmark[i].y * img_h)] for i in indices])
+        x_min, y_min = np.min(pts, axis=0)
+        x_max, y_max = np.max(pts, axis=0)
+        if name == "area_dahi":
+            roi_h = y_max - y_min
+            y_min = max(0, int(y_min - roi_h * 0.6))
+        x_min, y_min = max(0, x_min), max(0, y_min)
+        x_max, y_max = min(img_w, x_max), min(img_h, y_max)
+        crop_flow = flow[y_min:y_max, x_min:x_max]
+        if crop_flow.size == 0:
+            roi_flows[name] = (0.0, 0.0, 0.0, 0.0)
+        else:
+            du = get_dominant_movement(crop_flow[..., 0])
+            dv = get_dominant_movement(crop_flow[..., 1])
+            std_u = np.std(crop_flow[..., 0])
+            std_v = np.std(crop_flow[..., 1])
+            roi_flows[name] = (du, dv, float(std_u), float(std_v))
+    return roi_flows
+
+
+def extract_micro_flow_series_from_cache(cached_flows, frames_aligned, onset_idx, offset_idx,
+                                         face_mesh, max_seq_len=MAX_SEQ_LEN):
+    """
+    Extract enriched flow time-series dari cached_flows (re-use dari spotter).
+    Sama persis dengan extract_sample() di generator.py.
+
+    Args:
+        cached_flows: list of flow arrays dari calculate_accumulated_flow_energy()
+                      cached_flows[i] = flow dari frames_aligned[i] ke frames_aligned[i+1]
+        frames_aligned: list of aligned BGR frames
+        onset_idx: index onset dalam frames_aligned
+        offset_idx: index offset dalam frames_aligned
+        face_mesh: MediaPipe FaceMesh instance
+        max_seq_len: truncation length
+
+    Returns:
+        flow_series: np.array shape (T, 63) — 9 ROI × 7 features, atau None jika gagal
+    """
+    h, w = TARGET_ALIGN_SIZE[1], TARGET_ALIGN_SIZE[0]  # 320, 320
+    flow_series = []
+
+    # Iterate frame pairs dari onset sampai offset
+    for i in range(onset_idx, min(offset_idx, len(cached_flows))):
+        # Ambil flow dari cache (sudah dihitung di Fase 3)
+        if i >= len(cached_flows):
+            flow_series.append(np.zeros(63, dtype=np.float32))
+            continue
+
+        flow = cached_flows[i]
+
+        # Detect landmarks pada frame "from" (untuk ROI extraction)
+        frame_rgb = cv2.cvtColor(frames_aligned[i], cv2.COLOR_BGR2RGB)
+        results = face_mesh.process(frame_rgb)
+
+        if not results.multi_face_landmarks:
+            flow_series.append(np.zeros(63, dtype=np.float32))
+            continue
+
+        landmarks = results.multi_face_landmarks[0]
+
+        # Compute strain dari flow (untuk max_strain feature)
+        strain_img = compute_strain_from_flow(flow, landmarks, w, h)
+        roi_crops = extract_regions_preserved(strain_img, landmarks, w, h)
+
+        # Extract enriched ROI flow features
+        roi_flows = get_roi_enriched_flow(flow, landmarks, w, h)
+        global_data = roi_flows.get("area_pangkal_hidung", (0.0, 0.0, 0.0, 0.0))
+        global_du, global_dv = global_data[0], global_data[1]
+
+        frame_features = []
+        for roi_name in ROI_ORDER:
+            du, dv, std_u, std_v = roi_flows.get(roi_name, (0.0, 0.0, 0.0, 0.0))
+            du_clean = du - global_du
+            dv_clean = dv - global_dv
+
+            # 1. Magnitude & Angle
+            magnitude = np.sqrt(du_clean**2 + dv_clean**2)
+            angle = np.arctan2(dv_clean, du_clean)
+
+            # 2. Max Strain value for this ROI
+            img_strain = roi_crops[roi_name]
+            max_strain = float(np.max(img_strain)) if img_strain.size > 0 else 0.0
+
+            # 7 Fitur per ROI: du, dv, magnitude, angle, std_u, std_v, max_strain
+            frame_features.extend([du_clean, dv_clean, magnitude, angle, std_u, std_v, max_strain])
+
+        flow_series.append(np.array(frame_features, dtype=np.float32))
+
+        # Truncate jika sudah mencapai max_seq_len
+        if len(flow_series) >= max_seq_len:
+            break
+
+    if len(flow_series) == 0:
+        return None
+
+    return np.array(flow_series, dtype=np.float32)
 
 
 def extract_regions_preserved(strain_img, landmarks, img_w, img_h):
@@ -721,18 +850,41 @@ def init_models(device=None):
     else:
         print(f"[Pipeline] WARNING: Macro weights not found: {MACRO_WEIGHTS_PATH}")
 
-    # Micro Model (CNN+Transformer)
-    model_micro = CNNTransformerModel(num_classes=len(MICRO_CLASSES)).to(device)
+    # Micro Model (BiLSTM + Attention)
+    # Load config dari checkpoint jika ada
+    micro_config = {
+        'input_dim': LSTM_INPUT_DIM,
+        'hidden_dim': LSTM_HIDDEN_DIM,
+        'num_layers': LSTM_NUM_LAYERS,
+        'num_classes': len(MICRO_CLASSES),
+        'bidirectional': LSTM_BIDIRECTIONAL,
+        'dropout_lstm': LSTM_DROPOUT_LSTM,
+        'dropout_fc': LSTM_DROPOUT_FC,
+    }
 
     if os.path.exists(MICRO_WEIGHTS_PATH):
         checkpoint = torch.load(MICRO_WEIGHTS_PATH, map_location=device, weights_only=False)
-        if 'model_state_dict' in checkpoint:
+        # Override config dari checkpoint jika tersedia
+        if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+            micro_config['input_dim'] = checkpoint.get('input_dim', LSTM_INPUT_DIM)
+            micro_config['hidden_dim'] = checkpoint.get('hidden_dim', LSTM_HIDDEN_DIM)
+            micro_config['num_layers'] = checkpoint.get('num_layers', LSTM_NUM_LAYERS)
+            micro_config['num_classes'] = checkpoint.get('num_classes', len(MICRO_CLASSES))
+            micro_config['bidirectional'] = checkpoint.get('bidirectional', LSTM_BIDIRECTIONAL)
+
+        model_micro = LSTMClassifier(**micro_config).to(device)
+
+        if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
             model_micro.load_state_dict(checkpoint['model_state_dict'])
         else:
             model_micro.load_state_dict(checkpoint)
         model_micro.eval()
-        print(f"[Pipeline] Micro Model Loaded: {MICRO_WEIGHTS_PATH}")
+        print(f"[Pipeline] Micro Model (LSTM) Loaded: {MICRO_WEIGHTS_PATH}")
+        print(f"[Pipeline] LSTM Config: input={micro_config['input_dim']}, "
+              f"hidden={micro_config['hidden_dim']}, layers={micro_config['num_layers']}, "
+              f"bidir={micro_config['bidirectional']}")
     else:
+        model_micro = LSTMClassifier(**micro_config).to(device)
         print(f"[Pipeline] WARNING: Micro weights not found: {MICRO_WEIGHTS_PATH}")
 
     return {

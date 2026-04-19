@@ -22,7 +22,7 @@ from ml.pipeline import (
     align_and_crop_face,
     calculate_accumulated_flow_energy,
     merge_roi_events,
-    compute_optical_strain,
+    extract_micro_flow_series_from_cache,
     extract_regions_preserved,
     MACRO_CLASSES, MICRO_CLASSES, ROI_ORDER, TARGET_ALIGN_SIZE,
 )
@@ -166,7 +166,7 @@ class PredictionWorker(QThread):
                         f"Fase 3/{4}: Optical Flow {current}/{total} pairs..."
                     )
 
-            _, _, history_per_roi = calculate_accumulated_flow_energy(
+            total_energy, cached_flows, history_per_roi = calculate_accumulated_flow_energy(
                 frames_aligned, face_mesh, raft_model, device, transforms_raft,
                 progress_callback=spotter_progress
             )
@@ -196,45 +196,27 @@ class PredictionWorker(QThread):
                 ap_idx = ev['apex']
                 off_idx = ev['offset']
 
-                onset_bgr = frames_aligned[on_idx]
-                apex_bgr = frames_aligned[ap_idx]
-
-                onset_rgb = cv2.cvtColor(onset_bgr, cv2.COLOR_BGR2RGB)
-                res_lm = face_mesh.process(onset_rgb)
-
-                if not res_lm.multi_face_landmarks:
-                    print(f"[Micro] Skip event {ev_idx}: FaceMesh gagal pada frame {on_idx}")
+                # Validasi range
+                if on_idx >= off_idx or on_idx >= len(frames_aligned) - 1:
+                    print(f"[Micro] Skip event {ev_idx}: range invalid on={on_idx} off={off_idx}")
                     continue
 
-                landmarks = res_lm.multi_face_landmarks[0]
-                h, w = onset_bgr.shape[:2]
-
-                # 1. Optical Strain
-                strain_img = compute_optical_strain(
-                    onset_bgr, apex_bgr, landmarks,
-                    raft_model, device, transforms_raft
+                # Extract enriched flow time-series dari cached_flows (re-use dari Fase 3)
+                flow_series = extract_micro_flow_series_from_cache(
+                    cached_flows, frames_aligned, on_idx, off_idx, face_mesh
                 )
 
-                # 2. Extract 9 regions
-                roi_crops = extract_regions_preserved(strain_img, landmarks, w, h)
+                if flow_series is None or len(flow_series) < 1:
+                    print(f"[Micro] Skip event {ev_idx}: flow series kosong")
+                    continue
 
-                stacked_regions = []
-                for key in ROI_ORDER:
-                    img = roi_crops[key]
-                    img = np.expand_dims(img, axis=-1)
-                    stacked_regions.append(img)
+                # Convert to tensor: (1, T, 63)
+                seq_tensor = torch.from_numpy(flow_series).float().unsqueeze(0).to(device)
+                length_tensor = torch.tensor([len(flow_series)]).long().to(device)
 
-                # 3. Shape [9, 64, 64, 1]
-                final_array = np.array(stacked_regions, dtype=np.float32)
-
-                # 4. Tensor → [1, 9, 1, 64, 64]
-                tensor_input = torch.tensor(final_array)
-                tensor_input = tensor_input.permute(0, 3, 1, 2)  # [9, 1, 64, 64]
-                tensor_input = tensor_input.unsqueeze(0).to(device)  # [1, 9, 1, 64, 64]
-
-                # 5. Predict
+                # Predict
                 with torch.no_grad():
-                    out_micro = model_micro(tensor_input)
+                    out_micro = model_micro(seq_tensor, length_tensor)
                     probs_micro = torch.softmax(out_micro, dim=1)
                     conf_micro, pred_m = torch.max(probs_micro, 1)
                     pred_class_micro = MICRO_CLASSES[pred_m.item()]
