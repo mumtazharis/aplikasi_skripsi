@@ -22,7 +22,6 @@ from torchvision import models
 from torchvision.models.optical_flow import raft_large, Raft_Large_Weights
 import mediapipe as mp
 from scipy.signal import find_peaks
-from scipy.ndimage import percentile_filter, median_filter
 import warnings
 
 warnings.filterwarnings('ignore')
@@ -90,44 +89,41 @@ ROI_ORDER = [
 # ==========================================
 NUM_REGIONS_MICRO = 9
 PROJECTION_DIM = 64
-NUM_HEADS = 2
-TRANSFORMER_LAYERS = 1
+NUM_HEADS = 4
+TRANSFORMER_LAYERS = 4
 
 
-class MobileNetBackbone(nn.Module):
+class CNNBackbone(nn.Module):
     def __init__(self, in_channels=1, proj_dim=PROJECTION_DIM):
         super().__init__()
-        
-        # 1. Load pre-trained MobileNetV3 Small
-        # Menggunakan weights DEFAULT (sebelumnya pretrained=True)
-        self.backbone = models.mobilenet_v3_small(weights=models.MobileNet_V3_Small_Weights.DEFAULT)
-        
-        # 2. Modifikasi layer konvolusi pertama untuk menerima 1 channel (bukan 3 channel RGB)
-        # Pada MobileNetV3, layer pertama berada di self.backbone.features[0][0]
-        original_conv = self.backbone.features[0][0]
-        self.backbone.features[0][0] = nn.Conv2d(
-            in_channels, 
-            original_conv.out_channels, 
-            kernel_size=original_conv.kernel_size, 
-            stride=original_conv.stride, 
-            padding=original_conv.padding, 
-            bias=original_conv.bias is not None
-        )
-        
-        # 3. Modifikasi classifier (head) agar outputnya sesuai dengan PROJECTION_DIM (64)
-        # Classifier layer terakhir pada MobileNetV3 Small ada di index [3]
-        in_features = self.backbone.classifier[3].in_features
-        self.backbone.classifier[3] = nn.Linear(in_features, proj_dim)
-        
+        self.conv1 = nn.Conv2d(in_channels, 32, kernel_size=3, padding=1)
+        self.bn1 = nn.BatchNorm2d(32)
+        self.pool1 = nn.MaxPool2d(2)
+
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
+        self.bn2 = nn.BatchNorm2d(64)
+        self.pool2 = nn.MaxPool2d(2)
+
+        self.conv3 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
+        self.bn3 = nn.BatchNorm2d(128)
+        self.gap = nn.AdaptiveAvgPool2d((1, 1))
+
+        self.fc = nn.Linear(128, proj_dim)
+        self.dropout = nn.Dropout(0.3)
 
     def forward(self, x):
-        return self.backbone(x)
+        x = self.pool1(F.relu(self.bn1(self.conv1(x))))
+        x = self.pool2(F.relu(self.bn2(self.conv2(x))))
+        x = self.gap(F.relu(self.bn3(self.conv3(x))))
+        x = torch.flatten(x, 1)
+        x = self.dropout(F.relu(self.fc(x)))
+        return x
 
 
 class PositionalEmbedding(nn.Module):
     def __init__(self, num_regions, proj_dim):
         super().__init__()
-        self.pos_emb = nn.Parameter(torch.randn(1, num_regions, proj_dim) * 0.02)
+        self.pos_emb = nn.Parameter(torch.randn(1, num_regions, proj_dim))
 
     def forward(self, x):
         return x + self.pos_emb
@@ -136,7 +132,7 @@ class PositionalEmbedding(nn.Module):
 class CNNTransformerModel(nn.Module):
     def __init__(self, num_classes=2):
         super().__init__()
-        self.cnn = MobileNetBackbone(in_channels=1, proj_dim=PROJECTION_DIM)
+        self.cnn = CNNBackbone(proj_dim=PROJECTION_DIM)
         self.pos_emb = PositionalEmbedding(NUM_REGIONS_MICRO, PROJECTION_DIM)
 
         encoder_layer = nn.TransformerEncoderLayer(
@@ -469,7 +465,7 @@ def extract_regions_preserved(strain_img, landmarks, img_w, img_h):
 # 5. SPOTTER FUNCTIONS
 # ==========================================
 def calculate_accumulated_flow_energy(frames_bgr, face_mesh, raft_model, device, transforms_raft,
-                                       drift_decay=0.92, motion_threshold=0.05, blink_pad=3,
+                                       drift_decay=0.96, motion_threshold=0.1, blink_pad=3,
                                        progress_callback=None):
     """
     Calculate accumulated flow energy for micro-expression spotting.
@@ -541,7 +537,7 @@ def calculate_accumulated_flow_energy(frames_bgr, face_mesh, raft_model, device,
                 current_movement = np.hypot(du_bersih, dv_bersih)
 
                 if current_movement > motion_threshold:
-                    current_decay = 0.98
+                    current_decay = 1.0
                     stationary_counter[name] = 1
                 else:
                     current_decay = drift_decay ** stationary_counter[name]
@@ -567,184 +563,102 @@ def calculate_accumulated_flow_energy(frames_bgr, face_mesh, raft_model, device,
     return np.array(total_energy), cached_flows, history_per_roi
 
 
-
-def detect_multiple_expressions_raw(magnitudes, fps=30, min_prominence=0.6, min_height=0.8, window_sec=3.0):
-    """
-    min_prominence: Seberapa menonjol minimal sebuah puncak dari kakinya.
-    min_height: Ketinggian absolut minimal agar tidak menangkap noise di ROI datar.
-    window_sec: Jendela waktu (detik) untuk menghitung threshold adaptif/lokal.
-    """
+def detect_multiple_expressions_raw(magnitudes, fps=30, min_prominence=0.6, min_height=0.8):
     raw_mag = np.array(magnitudes)
-    
-    # Menentukan ukuran window dalam bentuk jumlah frame (pastikan ganjil)
-    window_size = int(fps * window_sec)
-    if window_size % 2 == 0:
-        window_size += 1 
+    p95 = np.percentile(raw_mag, 95)
+    median_mag = np.median(raw_mag)
 
-    # 1. Gunakan Sliding Window (Statistik Lokal)
-    # Ini akan membuat threshold menyesuaikan diri secara lokal. 
-    # Gerakan besar hanya akan menaikkan threshold di sekitar gerakan itu saja.
-    local_p95 = percentile_filter(raw_mag, percentile=95, size=window_size)
-    local_median = median_filter(raw_mag, size=window_size)
-    
-    # 2. Tentukan Prominence dan Height berupa ARRAY (Dinamis per frame)
-    # Gunakan np.maximum (bukan built-in max) karena kita membandingkan Array dengan Scalar
-    optimal_prominence = np.maximum((local_p95 - local_median) * 0.5, min_prominence)
-    optimal_height = np.maximum(local_p95 * 0.5, min_height)
+    optimal_prominence = max((p95 - median_mag) * 0.5, min_prominence)
+    optimal_height = max(p95 * 0.5, min_height)
+    min_width = max(int(fps * 0.1), 3)
 
-    # 3. Syarat Lebar (Width)
-    min_width = max(int(fps * 0.1), 3) 
-
-    # find_peaks akan membaca optimal_prominence dan optimal_height secara spesifik untuk tiap indeks
     peaks, properties = find_peaks(
-        raw_mag, 
-        distance=max(int(fps/5), 6),
+        raw_mag,
+        distance=max(int(fps / 5), 6),
         prominence=optimal_prominence,
         height=optimal_height,
-        width=min_width 
+        width=min_width
     )
 
-    # 4. Baseline threshold juga harus dinamis
-    # Alih-alih meratakan 30% data terendah secara global, kita ambil persentil ke-30 secara lokal
-    local_baseline = percentile_filter(raw_mag, percentile=30, size=window_size)
-    
+    sorted_mag = np.sort(raw_mag)
+    baseline_threshold = np.mean(sorted_mag[:int(max(1, len(raw_mag) * 0.3))])
     d_mag = np.gradient(raw_mag)
-    grad_std = np.std(d_mag) # Gradien std bisa tetap global agar tidak terlalu fluktuatif
-    grad_thresh = max(0.5 * grad_std, 0.05) 
-    
+    grad_std = np.std(d_mag)
+    grad_thresh = max(0.5 * grad_std, 0.05)
+
     patience_limit = max(3, int(fps * 0.1))
     results = []
 
     for apex in peaks:
-        # Cegah error jika apex berada persis di frame 0 atau frame terakhir
-        if apex == 0 or apex == len(raw_mag) - 1:
-            continue
+        onset, offset = 0, len(raw_mag) - 1
 
-        # Ambil baseline threshold spesifik tepat di waktu apex terjadi
-        current_baseline = local_baseline[apex]
-        
-        # --- MENCARI ONSET (Mundur dari Apex) ---
         patience_count = 0
-        onset = max(0, apex - 1) # Default: minimal 1 frame sebelum apex
-        
-        # Mulai loop dari (apex - 1), bukan dari apex
-        for i in range(apex - 1, -1, -1):
-            if d_mag[i] <= grad_thresh: 
+        for i in range(apex, 0, -1):
+            if d_mag[i] <= grad_thresh:
                 patience_count += 1
-            else: 
+            else:
                 patience_count = 0
-                
-            if patience_count >= patience_limit or raw_mag[i] <= current_baseline:
-                # Kalkulasi onset sementara
-                onset_temp = i + patience_count
-                # Paksa onset agar strictly lebih kecil dari apex
-                onset = min(onset_temp, apex - 1)
+            if patience_count >= patience_limit or raw_mag[i] <= baseline_threshold:
+                onset = min(apex, i + patience_count)
                 break
-        
-        # Safety net: pastikan tidak negatif dan kurang dari apex
-        onset = max(0, min(onset, apex - 1))
 
-        # --- MENCARI OFFSET (Maju dari Apex) ---
         patience_count = 0
-        offset = min(len(raw_mag) - 1, apex + 1) # Default: minimal 1 frame setelah apex
-        
-        # Mulai loop dari (apex + 1), bukan dari apex
-        for i in range(apex + 1, len(raw_mag)):
-            if d_mag[i] >= -grad_thresh: 
+        for i in range(apex, len(raw_mag) - 1):
+            if d_mag[i] >= -grad_thresh:
                 patience_count += 1
-            else: 
+            else:
                 patience_count = 0
-                
-            if patience_count >= patience_limit or raw_mag[i] <= current_baseline:
-                # Kalkulasi offset sementara
-                offset_temp = i - patience_count
-                # Paksa offset agar strictly lebih besar dari apex
-                offset = max(offset_temp, apex + 1)
+            if patience_count >= patience_limit or raw_mag[i] <= baseline_threshold:
+                offset = max(apex, i - patience_count)
                 break
-                
-        # Safety net: pastikan tidak out-of-bounds dan lebih dari apex
-        offset = min(len(raw_mag) - 1, max(offset, apex + 1))
 
         results.append({
-            "onset": onset, 
-            "apex": apex, 
+            "onset": onset,
+            "apex": apex,
             "offset": offset,
-            "prominence": properties['prominences'][list(peaks).index(apex)] if 'prominences' in properties else 0
+            "prominence": properties['prominences'][list(peaks).index(apex)]
+            if 'prominences' in properties else 0
         })
 
     return results, raw_mag
 
 
-
 def merge_roi_events(history_per_roi, fps=30):
     all_events = []
-    
-    # 1. Deteksi event pada tiap ROI secara mandiri
+
     for roi_name, history in history_per_roi.items():
-        # Lewati ROI yang nyaris tidak ada pergerakan (flat/kosong)
         if np.max(history) < 0.1:
             continue
-            
         events, _ = detect_multiple_expressions_raw(magnitudes=history, fps=fps)
-        
-        # Tandai event ini milik ROI mana
         for e in events:
-            e['roi'] = roi_name 
+            e['roi'] = roi_name
             all_events.append(e)
-            
+
     if not all_events:
         return []
-        
-    # 2. Urutkan semua event berdasarkan waktu Onset (kiri ke kanan)
+
     all_events = sorted(all_events, key=lambda x: x['onset'])
-    
-    # 3. Proses Penggabungan (Merging) yang Overlap
+
     merged_events = []
     current_event = all_events[0].copy()
-    
+
     for next_event in all_events[1:]:
-        # Cek Overlap: Apakah event berikutnya mulai sebelum event saat ini selesai?
-        # (Kita berikan toleransi gap 1 frame agar gerakan yang sangat berdekatan ikut tergabung)
         if next_event['onset'] <= current_event['offset'] + 1:
-            
-            # Rentangkan batas waktu gabungan
             current_event['onset'] = min(current_event['onset'], next_event['onset'])
             current_event['offset'] = max(current_event['offset'], next_event['offset'])
-            
-            # Bandingkan nilai absolut pergerakan di titik Apex masing-masing ROI
+
             mag_current = history_per_roi[current_event['roi']][current_event['apex']]
             mag_next = history_per_roi[next_event['roi']][next_event['apex']]
-            
-            # Jika Apex event berikutnya lebih kuat, jadikan dia sebagai Apex Utama
+
             if mag_next > mag_current:
                 current_event['apex'] = next_event['apex']
-                current_event['roi'] = next_event['roi'] # Simpan nama ROI pemenang
+                current_event['roi'] = next_event['roi']
                 current_event['prominence'] = next_event['prominence']
-                
         else:
-            # --- VALIDASI AKHIR SEBELUM DISIMPAN ---
-            max_len = len(history_per_roi[current_event['roi']])
-            
-            # Paksa onset tetap di sebelah kiri apex
-            if current_event['onset'] >= current_event['apex']:
-                current_event['onset'] = max(0, current_event['apex'] - 1)
-                
-            # Paksa offset tetap di sebelah kanan apex
-            if current_event['offset'] <= current_event['apex']:
-                current_event['offset'] = min(max_len - 1, current_event['apex'] + 1)
-                
             merged_events.append(current_event)
-            # Mulai melacak event baru
             current_event = next_event.copy()
-            
-    max_len = len(history_per_roi[current_event['roi']])
-    if current_event['onset'] >= current_event['apex']:
-        current_event['onset'] = max(0, current_event['apex'] - 1)
-    if current_event['offset'] <= current_event['apex']:
-        current_event['offset'] = min(max_len - 1, current_event['apex'] + 1)
-        
+
     merged_events.append(current_event)
-    
     return merged_events
 
 
