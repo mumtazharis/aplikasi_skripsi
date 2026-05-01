@@ -534,6 +534,8 @@ def calculate_accumulated_flow_energy(frames_bgr, face_mesh, raft_model, device,
 
                 du_bersih = du - global_du
                 dv_bersih = dv - global_dv
+                # du_bersih = du
+                # dv_bersih = dv
 
                 if name in ["area_mata_kanan", "area_mata_kiri"]:
                     du_bersih, dv_bersih = 0.0, 0.0
@@ -568,7 +570,7 @@ def calculate_accumulated_flow_energy(frames_bgr, face_mesh, raft_model, device,
 
 
 
-def detect_multiple_expressions_raw(magnitudes, fps=30, min_prominence=0.6, min_height=0.8, window_sec=3.0):
+def detect_multiple_expressions_raw(magnitudes, fps=30, min_prominence=0.6, min_height=0.8, window_sec=1.0):
     """
     min_prominence: Seberapa menonjol minimal sebuah puncak dari kakinya.
     min_height: Ketinggian absolut minimal agar tidak menangkap noise di ROI datar.

@@ -1,11 +1,15 @@
 from PySide6.QtWidgets import QWidget
-from PySide6.QtGui import QPainter, QColor, QPen, QPolygonF
+from PySide6.QtGui import QPainter, QColor, QPen, QPolygonF, QPixmap
 from PySide6.QtCore import Qt, QRectF, QPointF
 
 class RoiLineChartWidget(QWidget):
     """
     Widget untuk menggambar Grafik Energy ROI (Global dan Region).
     Menggunakan konsep Sliding Window layaknya Oscilloscope.
+
+    OPTIMIZED: QPixmap double-buffering.
+    Chart body di-render sekali ke _chart_pixmap saat window bergeser.
+    Cursor update hanya blit pixmap + gambar garis cursor.
     """
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -22,11 +26,17 @@ class RoiLineChartWidget(QWidget):
             "area_mulut_kanan", "area_mulut_kiri"
         ]
         
-        # Warna-warni kontras tinggi untuk membedakan hingga 11+ ROI
-        self.roi_colors = [
+        # Warna-warni kontras tinggi — pre-cache QColor
+        self._roi_color_hex = [
             "#e6194B", "#3cb44b", "#ffe119", "#4363d8", "#f58231", 
             "#911eb4", "#42d4f4", "#f032e6", "#bfef45"
         ]
+        self.roi_colors = [QColor(c) for c in self._roi_color_hex]
+        self._roi_colors_dim = []
+        for c in self._roi_color_hex:
+            qc = QColor(c)
+            qc.setAlpha(50)
+            self._roi_colors_dim.append(qc)
         
         self.history = {k: [] for k in self.roi_keys}
         self.global_history = []
@@ -38,6 +48,23 @@ class RoiLineChartWidget(QWidget):
         
         self.visible_lines = {k: True for k in self.roi_keys}
         self.legend_rects = []
+        
+        # --- QPixmap double-buffer ---
+        self._chart_pixmap = None   # cached chart body (tanpa cursor)
+        self._chart_dirty = True    # True = perlu rebuild
+        self._cached_x_min = -1
+        self._cached_x_max = -1
+        
+        # Pre-cached colors
+        self._bg_color = QColor("#232323")
+        self._plot_bg = QColor("#1a1a1a")
+        self._border_color = QColor("#3a3a3a")
+        self._cursor_color = QColor("#ffffff")
+        self._text_color = QColor("#cccccc")
+        self._no_data_color = QColor("#777777")
+        self._global_line_color = QColor("#2d8ceb")
+        self._legend_visible_color = QColor("#aaaaaa")
+        self._legend_hidden_color = QColor("#555555")
         
         self.setCursor(Qt.PointingHandCursor)
 
@@ -70,6 +97,10 @@ class RoiLineChartWidget(QWidget):
             if self.history[k]:
                 max_reg = max(max_reg, max(self.history[k]))
         self.region_max_y = max_reg * 1.2
+        
+        # Invalidate cache
+        self._chart_dirty = True
+        self._cached_x_min = -1
             
         self.update()
 
@@ -77,20 +108,41 @@ class RoiLineChartWidget(QWidget):
         """
         Menggeser cursor window.
         """
-        self.current_frame = max(0, min(frame_idx, self.total_frames - 1))
+        new_frame = max(0, min(frame_idx, self.total_frames - 1))
+        if new_frame == self.current_frame:
+            return
+        self.current_frame = new_frame
+        
+        # Hitung apakah window bergeser
+        x_min = max(0, self.current_frame - (self.window_size // 2))
+        x_max = x_min + self.window_size
+        if x_max > self.total_frames:
+            x_max = max(self.window_size, self.total_frames)
+            x_min = max(0, x_max - self.window_size)
+        
+        if x_min != self._cached_x_min or x_max != self._cached_x_max:
+            self._chart_dirty = True   # window bergeser → rebuild chart
+        
         self.update()
 
+    def resizeEvent(self, event):
+        """Invalidate cache saat ukuran widget berubah."""
+        self._chart_dirty = True
+        super().resizeEvent(event)
+
+    # ===================================================================
+    # PAINT — Double-buffered
+    # ===================================================================
+
     def paintEvent(self, event):
-        painter = QPainter(self)
-        
         w = self.width()
         h = self.height()
         
-        # Latar Belakang
-        painter.fillRect(0, 0, w, h, QColor("#232323"))
+        painter = QPainter(self)
         
         if self.total_frames == 0:
-            painter.setPen(QColor("#777777"))
+            painter.fillRect(0, 0, w, h, self._bg_color)
+            painter.setPen(self._no_data_color)
             painter.drawText(self.rect(), Qt.AlignCenter, "No ROI Data")
             return
             
@@ -100,20 +152,147 @@ class RoiLineChartWidget(QWidget):
         global_h = available_h // 2
         region_h = available_h - global_h
         
+        # Hitung window range
+        x_min = max(0, self.current_frame - (self.window_size // 2))
+        x_max = x_min + self.window_size
+        if x_max > self.total_frames:
+            x_max = max(self.window_size, self.total_frames)
+            x_min = max(0, x_max - self.window_size)
+        
+        window_range = x_max - x_min
+        if window_range <= 0:
+            return
+        
+        # Rebuild chart pixmap if dirty or size changed
+        if (self._chart_dirty or 
+            self._chart_pixmap is None or 
+            self._chart_pixmap.size() != self.size()):
+            self._rebuild_chart_pixmap(w, h, global_h, region_h, x_min, x_max, window_range)
+            self._cached_x_min = x_min
+            self._cached_x_max = x_max
+            self._chart_dirty = False
+
+        # 1. Blit cached chart body (sangat cepat)
+        painter.drawPixmap(0, 0, self._chart_pixmap)
+        
+        # 2. Draw cursor lines on top (ringan)
+        padding = 4
+        plot_w = w - (padding * 2)
+        plot_x = padding
+        cursor_rel_idx = self.current_frame - x_min
+        
+        if 0 <= cursor_rel_idx <= window_range:
+            cursor_px = plot_x + (cursor_rel_idx / window_range) * plot_w
+            pen_cursor = QPen(self._cursor_color, 1)
+            pen_cursor.setStyle(Qt.DashLine)
+            painter.setPen(pen_cursor)
+            
+            # Cursor pada global chart
+            plot_y_g = 18
+            plot_h_g = global_h - 22
+            painter.drawLine(int(cursor_px), plot_y_g, int(cursor_px), plot_y_g + plot_h_g)
+            
+            # Cursor pada region chart
+            plot_y_r = global_h + 18
+            plot_h_r = region_h - 22
+            painter.drawLine(int(cursor_px), plot_y_r, int(cursor_px), plot_y_r + plot_h_r)
+
+    # ===================================================================
+    # REBUILD PIXMAP — dipanggil SEKALI saat window/size/visibility berubah
+    # ===================================================================
+
+    def _rebuild_chart_pixmap(self, w, h, global_h, region_h, x_min, x_max, window_range):
+        """Render chart body + legend ke QPixmap cache."""
+        self._chart_pixmap = QPixmap(w, h)
+        painter = QPainter(self._chart_pixmap)
+        
+        # Latar Belakang
+        painter.fillRect(0, 0, w, h, self._bg_color)
+        
+        padding = 4
+        plot_w = w - (padding * 2)
+        plot_x = padding
+        
         # --- 1. GLOBAL CHART ---
-        self._draw_chart(painter, 0, 0, w, global_h, "GLOBAL MOTION", [self.global_history], ["#2d8ceb"], self.global_max_y, [True])
+        plot_h_g = global_h - 22
+        plot_y_g = 18
+        
+        self._draw_chart_to_painter(
+            painter, plot_x, 0, plot_w, global_h, plot_y_g, plot_h_g,
+            "GLOBAL MOTION",
+            [self.global_history[int(x_min):int(x_max)]],
+            [self._global_line_color],
+            self.global_max_y,
+            [True],
+            window_range
+        )
         
         # --- 2. REGION CHART ---
-        region_history_list = [self.history[k] for k in self.roi_keys]
-        region_visible_mask = [self.visible_lines[k] for k in self.roi_keys]
-        self._draw_chart(painter, 0, global_h, w, region_h, "REGION MOTION", region_history_list, self.roi_colors, self.region_max_y, region_visible_mask)
+        plot_h_r = region_h - 22
+        plot_y_r = global_h + 18
+        
+        region_slices = [self.history[k][int(x_min):int(x_max)] for k in self.roi_keys]
+        region_visible = [self.visible_lines[k] for k in self.roi_keys]
+        
+        self._draw_chart_to_painter(
+            painter, plot_x, global_h, plot_w, region_h, plot_y_r, plot_h_r,
+            "REGION MOTION",
+            region_slices,
+            self.roi_colors,
+            self.region_max_y,
+            region_visible,
+            window_range
+        )
         
         # --- 3. LEGEND ---
+        legend_h = 85
         self._draw_legend(painter, 0, h - legend_h, w, legend_h)
+        
+        painter.end()
+
+    def _draw_chart_to_painter(self, painter, plot_x, y_offset, plot_w, h_chart, 
+                                plot_y, plot_h, title, data_slices, colors, max_y, 
+                                visible_mask, window_range):
+        """Render satu chart (global/region) ke painter."""
+        # Judul
+        painter.setPen(self._text_color)
+        font = painter.font()
+        font.setPointSize(7)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.drawText(plot_x, y_offset + 12, title)
+        
+        # Background Grafik
+        painter.fillRect(plot_x, plot_y, plot_w, plot_h, self._plot_bg)
+        
+        # Border
+        painter.setPen(QPen(self._border_color, 1))
+        painter.drawRect(plot_x, plot_y, plot_w, plot_h)
+        
+        if window_range <= 0:
+            return
+        
+        # Gambar garis
+        for i, slice_data in enumerate(data_slices):
+            if not slice_data:
+                continue
+            if visible_mask is not None and not visible_mask[i]:
+                continue
+            
+            pen = QPen(colors[i % len(colors)], 1)
+            painter.setPen(pen)
+            
+            poly = QPolygonF()
+            for j, val in enumerate(slice_data):
+                px = plot_x + (j / window_range) * plot_w
+                py = plot_y + plot_h - (val / max_y) * plot_h
+                poly.append(QPointF(px, py))
+            
+            painter.drawPolyline(poly)
         
     def _draw_legend(self, painter, x_offset, y_offset, w, h_legend):
         self.legend_rects.clear()
-        painter.setPen(QColor("#cccccc"))
+        painter.setPen(self._text_color)
         font = painter.font()
         font.setPointSize(7)
         painter.setFont(font)
@@ -136,82 +315,20 @@ class RoiLineChartWidget(QWidget):
             
             is_visible = self.visible_lines.get(key, True)
             
-            # Draw color box
-            box_color = QColor(self.roi_colors[i % len(self.roi_colors)])
-            if not is_visible:
-                box_color.setAlpha(50) # Redupkan
+            # Draw color box — gunakan pre-cached color
+            if is_visible:
+                box_color = self.roi_colors[i % len(self.roi_colors)]
+            else:
+                box_color = self._roi_colors_dim[i % len(self._roi_colors_dim)]
             painter.setBrush(box_color)
             painter.setPen(Qt.NoPen)
             painter.drawRect(px, py + 2, 8, 8)
             
             # Draw text
-            text_color = QColor("#aaaaaa") if is_visible else QColor("#555555")
+            text_color = self._legend_visible_color if is_visible else self._legend_hidden_color
             painter.setPen(text_color)
             clean_name = key.replace("area_", "").replace("_", " ").title()
             painter.drawText(px + 14, py + 10, clean_name)
-
-    def _draw_chart(self, painter, x_offset, y_offset, w, h_chart, title, data_lines, colors, max_y, visible_mask=None):
-        padding = 4
-        plot_h = h_chart - 22
-        plot_w = w - (padding * 2)
-        plot_x = padding
-        plot_y = y_offset + 18
-        
-        # Judul
-        painter.setPen(QColor("#cccccc"))
-        font = painter.font()
-        font.setPointSize(7)
-        font.setBold(True)
-        painter.setFont(font)
-        painter.drawText(plot_x, y_offset + 12, title)
-        
-        # Background Grafik
-        painter.fillRect(plot_x, plot_y, plot_w, plot_h, QColor("#1a1a1a"))
-        
-        # Kotak Garis Luar (Border)
-        painter.setPen(QPen(QColor("#3a3a3a"), 1))
-        painter.drawRect(plot_x, plot_y, plot_w, plot_h)
-        
-        # LOGIKA SLIDING WINDOW
-        x_min = max(0, self.current_frame - (self.window_size // 2))
-        x_max = x_min + self.window_size
-        
-        if x_max > self.total_frames:
-            x_max = max(self.window_size, self.total_frames)
-            x_min = max(0, x_max - self.window_size)
-            
-        window_range = x_max - x_min
-        if window_range <= 0: return
-
-        # Gambar Garis-Garis
-        for i, line_data in enumerate(data_lines):
-            if visible_mask is not None and not visible_mask[i]:
-                continue
-                
-            # Gunakan ketebalan integer 1 (fast-path rendering) dan hindari RoundJoin
-            pen = QPen(QColor(colors[i % len(colors)]), 1)
-            painter.setPen(pen)
-            
-            slice_data = line_data[int(x_min):int(x_max)]
-            if not slice_data: 
-                continue
-            
-            poly = QPolygonF()
-            for j, val in enumerate(slice_data):
-                px = plot_x + (j / window_range) * plot_w
-                py = plot_y + plot_h - (val / max_y) * plot_h
-                poly.append(QPointF(px, py))
-                
-            painter.drawPolyline(poly)
-            
-        # Garis Cursor Tengah
-        cursor_rel_idx = self.current_frame - x_min
-        if 0 <= cursor_rel_idx <= window_range:
-            cursor_px = plot_x + (cursor_rel_idx / window_range) * plot_w
-            pen_cursor = QPen(QColor("#ffffff"), 1)
-            pen_cursor.setStyle(Qt.DashLine)
-            painter.setPen(pen_cursor)
-            painter.drawLine(cursor_px, plot_y, cursor_px, plot_y + plot_h)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -220,6 +337,8 @@ class RoiLineChartWidget(QWidget):
                 if rect.contains(pos):
                     # Toggle visibility
                     self.visible_lines[key] = not self.visible_lines[key]
+                    # Invalidate cache
+                    self._chart_dirty = True
                     self.update()
                     return
         super().mousePressEvent(event)

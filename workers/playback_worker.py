@@ -4,34 +4,55 @@ import cv2
 import time
 import threading
 from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 from PySide6.QtCore import QThread, Signal, QMutex
 import numpy as np
+
+
+# ================================================================
+# Deteksi jumlah core CPU secara otomatis
+# os.cpu_count() = logical threads (misal 12 untuk 6-core HT)
+# Gunakan setengah untuk physical core estimation
+# ================================================================
+_LOGICAL_CORES = os.cpu_count() or 4
+_PHYSICAL_CORES = max(2, _LOGICAL_CORES // 2)
+_IO_WORKERS = _PHYSICAL_CORES          # untuk parallel I/O (FrameCache)
+_CV_THREADS = _PHYSICAL_CORES          # untuk OpenCV internal ops
+
+cv2.setNumThreads(_CV_THREADS)
 
 
 class FrameCache:
     """
     Cache LRU untuk frame gambar dari folder.
-    Preload frame-frame berikutnya di background thread agar playback mulus.
+    OPTIMIZED: ThreadPoolExecutor untuk parallel I/O.
+    cv2.imread() melepas GIL → benar-benar paralel di C++ layer.
     """
 
-    def __init__(self, source_path, frame_files, cache_size=60):
+    def __init__(self, source_path, frame_files, cache_size=200, num_workers=_IO_WORKERS):
         self.source_path = source_path
         self.frame_files = frame_files
         self.cache_size = cache_size
         self.cache = OrderedDict()  # idx -> np.ndarray (RGB)
         self.lock = threading.Lock()
-        self.preload_thread = None
-        self.preload_running = False
+
+        # ThreadPoolExecutor untuk parallel frame loading
+        self.num_workers = num_workers
+        self.executor = ThreadPoolExecutor(
+            max_workers=num_workers,
+            thread_name_prefix="frame_io"
+        )
+        self._pending = set()  # set of idx yang sedang di-load
+        self._shutdown = False
 
     def get(self, idx):
         """Ambil frame dari cache. Jika belum ada, baca langsung (fallback)."""
         with self.lock:
             if idx in self.cache:
-                # Move to end (most recently used)
                 self.cache.move_to_end(idx)
                 return self.cache[idx]
 
-        # Cache miss — baca langsung
+        # Cache miss — baca langsung (blocking, tapi cepat karena NVMe)
         frame = self._read_frame(idx)
         if frame is not None:
             with self.lock:
@@ -39,45 +60,45 @@ class FrameCache:
                 self._evict()
         return frame
 
-    def preload_range(self, start_idx, count=40):
-        """Preload frame dari start_idx hingga start_idx + count di background."""
-        # Stop existing preload
-        self.preload_running = False
-        if self.preload_thread and self.preload_thread.is_alive():
-            self.preload_thread.join(timeout=0.5)
+    def preload_range(self, start_idx, count=100):
+        """
+        Submit batch frame ke thread pool untuk parallel loading.
+        Setiap frame di-submit sebagai task independen.
+        """
+        if self._shutdown:
+            return
 
-        self.preload_running = True
-        self.preload_thread = threading.Thread(
-            target=self._preload_worker,
-            args=(start_idx, count),
-            daemon=True,
-        )
-        self.preload_thread.start()
-
-    def _preload_worker(self, start_idx, count):
-        """Background worker yang membaca frame ke cache."""
         total = len(self.frame_files)
         for i in range(count):
-            if not self.preload_running:
-                break
-
             idx = start_idx + i
             if idx >= total:
                 break
 
-            # Skip jika sudah ada di cache
+            # Skip yang sudah ada di cache atau sedang di-load
             with self.lock:
                 if idx in self.cache:
                     continue
+            if idx in self._pending:
+                continue
 
+            self._pending.add(idx)
+            self.executor.submit(self._load_and_cache, idx)
+
+    def _load_and_cache(self, idx):
+        """Worker task: baca frame dari disk dan masukkan ke cache."""
+        try:
+            if self._shutdown:
+                return
             frame = self._read_frame(idx)
-            if frame is not None:
+            if frame is not None and not self._shutdown:
                 with self.lock:
                     self.cache[idx] = frame
                     self._evict()
+        finally:
+            self._pending.discard(idx)
 
     def _read_frame(self, idx):
-        """Baca satu frame dari disk."""
+        """Baca satu frame dari disk. cv2.imread melepas GIL → true parallelism."""
         if 0 <= idx < len(self.frame_files):
             filepath = os.path.join(self.source_path, self.frame_files[idx])
             frame_bgr = cv2.imread(filepath)
@@ -92,23 +113,23 @@ class FrameCache:
 
     def invalidate(self):
         """Bersihkan cache (misal saat seek jauh)."""
-        self.preload_running = False
-        if self.preload_thread and self.preload_thread.is_alive():
-            self.preload_thread.join(timeout=0.5)
+        # Tidak bisa cancel futures yang sudah submitted, tapi kita bisa
+        # bersihkan cache dan set shutdown flag sementara
         with self.lock:
             self.cache.clear()
+        self._pending.clear()
 
     def stop(self):
-        self.preload_running = False
-        if self.preload_thread and self.preload_thread.is_alive():
-            self.preload_thread.join(timeout=1.0)
+        """Shutdown thread pool. Dipanggil saat playback selesai."""
+        self._shutdown = True
+        self.executor.shutdown(wait=False, cancel_futures=True)
 
 
 class PlaybackWorker(QThread):
     """
     Worker thread untuk memutar ulang video dan sinkronisasi dengan data CSV.
     Mendukung play/pause, seek, dan speed control.
-    Menggunakan FrameCache untuk folder source agar playback mulus.
+    Menggunakan FrameCache (multi-threaded) untuk folder source.
     """
     frame_ready = Signal(np.ndarray, int)   # (frame_rgb, frame_index)
     playback_finished = Signal()
@@ -138,6 +159,9 @@ class PlaybackWorker(QThread):
         # Video source
         self.cap = None
 
+        # Pre-scaling target (width, height) — set dari UI thread
+        self._display_size = None  # tuple (w, h) or None
+
     def load_source(self, source_path, is_folder, fps=30.0):
         """Load video atau folder frame."""
         self.source_path = source_path
@@ -151,10 +175,13 @@ class PlaybackWorker(QThread):
             self.frame_files = sorted(raw_files, key=lambda x: int(''.join(filter(str.isdigit, x)) or 0))
             self.total_frames = len(self.frame_files)
 
-            # Buat cache untuk folder source
-            self.frame_cache = FrameCache(source_path, self.frame_files, cache_size=80)
-            # Preload awal
-            self.frame_cache.preload_range(0, 60)
+            # Buat cache multi-threaded (auto-detect workers + cache 200 frame)
+            self.frame_cache = FrameCache(
+                source_path, self.frame_files,
+                cache_size=200, num_workers=_IO_WORKERS
+            )
+            # Preload awal — 100 frame secara paralel
+            self.frame_cache.preload_range(0, 100)
         else:
             if self.cap:
                 self.cap.release()
@@ -221,7 +248,7 @@ class PlaybackWorker(QThread):
 
                 # Untuk folder: preload di sekitar posisi seek
                 if self.is_folder and self.frame_cache:
-                    self.frame_cache.preload_range(seek_target, 60)
+                    self.frame_cache.preload_range(seek_target, 100)
                     last_preload_idx = seek_target
 
                 frame = self._read_frame_at(self.current_frame_idx)
@@ -247,10 +274,10 @@ class PlaybackWorker(QThread):
 
                 self.current_frame_idx += 1
 
-                # Trigger preload ahead (setiap 20 frame)
+                # Trigger preload ahead (setiap 30 frame, 100 frame ke depan)
                 if self.is_folder and self.frame_cache:
-                    if self.current_frame_idx - last_preload_idx >= 20:
-                        self.frame_cache.preload_range(self.current_frame_idx, 60)
+                    if self.current_frame_idx - last_preload_idx >= 30:
+                        self.frame_cache.preload_range(self.current_frame_idx, 100)
                         last_preload_idx = self.current_frame_idx
 
                 # Frame timing: kompensasi waktu baca
@@ -272,23 +299,41 @@ class PlaybackWorker(QThread):
             self.frame_cache.stop()
             self.frame_cache = None
 
+    def set_display_size(self, width, height):
+        """Set target display size untuk pre-scaling di worker thread."""
+        if width > 0 and height > 0:
+            self._display_size = (width, height)
+        else:
+            self._display_size = None
+
     def _read_frame_at(self, idx):
-        """Baca frame pada index tertentu."""
+        """Baca frame pada index tertentu, pre-scale jika display_size di-set."""
+        frame = None
         if self.is_folder:
-            # Gunakan cache untuk folder source
             if self.frame_cache:
-                return self.frame_cache.get(idx)
+                frame = self.frame_cache.get(idx)
         else:
             if self.cap and self.cap.isOpened():
-                # Ensure position is correct
                 current_pos = int(self.cap.get(cv2.CAP_PROP_POS_FRAMES))
                 if current_pos != idx:
                     self.cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
-
                 ret, frame_bgr = self.cap.read()
                 if ret:
-                    return cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-        return None
+                    frame = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+
+        # Pre-scale di worker thread (off main thread)
+        if frame is not None and self._display_size is not None:
+            dw, dh = self._display_size
+            fh, fw = frame.shape[:2]
+            if fw != dw or fh != dh:
+                # Keep aspect ratio
+                scale = min(dw / fw, dh / fh)
+                new_w = int(fw * scale)
+                new_h = int(fh * scale)
+                if new_w > 0 and new_h > 0:
+                    frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+
+        return frame
 
 
 def load_csv_data(csv_path):

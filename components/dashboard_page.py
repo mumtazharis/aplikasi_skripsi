@@ -3,7 +3,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QFileDialog, QSlider, QComboBox, QSizePolicy, QScrollArea
 )
-from PySide6.QtCore import Qt, QSettings
+from PySide6.QtCore import Qt, QSettings, QTimer
 from utils.resource_path import resource_path
 from PySide6.QtGui import QImage, QPixmap, QIcon
 
@@ -25,6 +25,15 @@ class DashboardPage(QWidget):
         self.playback_worker = None
         self.total_frames = 0
         self.is_playing = False
+
+        # --- Throttle state ---
+        self._pending_frame = None      # (frame_rgb, frame_idx)
+        self._last_drawn_label = None   # cache untuk skip setStyleSheet
+        self._last_drawn_micro = None
+
+        self._ui_timer = QTimer(self)
+        self._ui_timer.setInterval(66)  # ~15 FPS UI refresh
+        self._ui_timer.timeout.connect(self._flush_pending_frame)
 
         self.setup_ui()
 
@@ -505,6 +514,11 @@ class DashboardPage(QWidget):
                 self.playback_worker.frame_ready.connect(self._on_playback_frame)
                 self.playback_worker.playback_finished.connect(self._on_playback_finished)
                 self.playback_worker.start()
+                self._ui_timer.start()
+
+                # Set display size untuk pre-scaling di worker thread
+                lbl_size = self.video_label.size()
+                self.playback_worker.set_display_size(lbl_size.width(), lbl_size.height())
 
                 self.btn_play.setEnabled(True)
                 self.btn_stop.setEnabled(True)
@@ -621,17 +635,31 @@ class DashboardPage(QWidget):
         self._update_current_prediction(frame_idx)
 
     def _on_playback_frame(self, frame_rgb, frame_idx):
+        """Dipanggil dari worker thread setiap frame. Hanya buffer, tidak langsung render."""
+        self._pending_frame = (frame_rgb, frame_idx)
+
+    def _flush_pending_frame(self):
+        """Dipanggil oleh QTimer ~15 FPS. Render frame terbaru ke UI."""
+        pending = self._pending_frame
+        if pending is None:
+            return
+        self._pending_frame = None
+
+        frame_rgb, frame_idx = pending
+
+        # Update display size untuk pre-scaling (jika window di-resize)
+        if self.playback_worker:
+            lbl_size = self.video_label.size()
+            self.playback_worker.set_display_size(lbl_size.width(), lbl_size.height())
+
         h, w, ch = frame_rgb.shape
         bpl = ch * w
-        image = QImage(frame_rgb.data, w, h, bpl, QImage.Format_RGB888)
+        # .copy() untuk memastikan buffer aman setelah frame_rgb di-GC
+        image = QImage(frame_rgb.data, w, h, bpl, QImage.Format_RGB888).copy()
         pixmap = QPixmap.fromImage(image)
 
-        scaled = pixmap.scaled(
-            self.video_label.size(),
-            Qt.KeepAspectRatio,
-            Qt.FastTransformation
-        )
-        self.video_label.setPixmap(scaled)
+        # Frame sudah pre-scaled di worker, langsung tampilkan
+        self.video_label.setPixmap(pixmap)
 
         self.seek_slider.blockSignals(True)
         self.seek_slider.setValue(frame_idx)
@@ -663,46 +691,53 @@ class DashboardPage(QWidget):
 
         self.lbl_frame_num.setText(f"Frame: {frame_idx}")
 
-        # Macro color - softer modern palette
-        if label_lower == "positive":
-            color = "#6a9955"
-        elif label_lower == "negative":
-            color = "#d16969"
-        elif label_lower == "neutral":
-            color = "#d7ba7d"
-        else:
-            color = "#888888"
+        # Macro color - hanya set stylesheet jika label berubah
+        if label_lower != self._last_drawn_label:
+            self._last_drawn_label = label_lower
+            if label_lower == "positive":
+                color = "#6a9955"
+            elif label_lower == "negative":
+                color = "#d16969"
+            elif label_lower == "neutral":
+                color = "#d7ba7d"
+            else:
+                color = "#888888"
+
+            self.lbl_macro_label.setStyleSheet(f"""
+                font-family: 'Segoe UI', 'Roboto', sans-serif;
+                font-size: 20px; font-weight: 800; color: {color};
+            """)
 
         self.lbl_macro_label.setText(label.upper())
-        self.lbl_macro_label.setStyleSheet(f"""
-            font-family: 'Segoe UI', 'Roboto', sans-serif;
-            font-size: 20px; font-weight: 800; color: {color};
-        """)
         self.lbl_macro_conf.setText(f"Conf: {conf:.4f}")
 
-        # Micro label
+        # Micro label — hanya set stylesheet jika label berubah
         micro = row.get('micro_label', '').strip()
         micro_conf = row.get('micro_confidence', 0)
-        if micro and micro.lower() not in ('', 'n/a'):
-            micro_lower = micro.lower()
-            if micro_lower == 'positive':
-                micro_color = '#6a9955'
-            elif micro_lower == 'negative':
-                micro_color = '#d16969'
+        micro_key = micro.lower() if micro else ''
+
+        if micro_key != self._last_drawn_micro:
+            self._last_drawn_micro = micro_key
+            if micro_key in ('positive', 'negative'):
+                if micro_key == 'positive':
+                    micro_color = '#6a9955'
+                else:
+                    micro_color = '#d16969'
+                self.lbl_micro_label.setStyleSheet(f"""
+                    font-family: 'Segoe UI', 'Roboto', sans-serif;
+                    font-size: 20px; font-weight: 800; color: {micro_color};
+                """)
+                self.lbl_micro_status.setStyleSheet("font-family: 'Consolas', monospace; font-size: 11px; color: #9e9e9e;")
             else:
-                micro_color = '#aaaaaa'
+                self.lbl_micro_label.setStyleSheet("font-family: 'Segoe UI', sans-serif; font-size: 20px; font-weight: 800; color: #444444;")
+                self.lbl_micro_status.setStyleSheet("font-family: 'Consolas', monospace; font-size: 11px; color: #666666;")
+
+        if micro and micro_key not in ('', 'n/a'):
             self.lbl_micro_label.setText(micro.upper())
-            self.lbl_micro_label.setStyleSheet(f"""
-                font-family: 'Segoe UI', 'Roboto', sans-serif;
-                font-size: 20px; font-weight: 800; color: {micro_color};
-            """)
             self.lbl_micro_status.setText(f"Conf: {micro_conf:.4f}")
-            self.lbl_micro_status.setStyleSheet("font-family: 'Consolas', monospace; font-size: 11px; color: #9e9e9e;")
         else:
             self.lbl_micro_label.setText("—")
-            self.lbl_micro_label.setStyleSheet("font-family: 'Segoe UI', sans-serif; font-size: 20px; font-weight: 800; color: #444444;")
             self.lbl_micro_status.setText("Not detected")
-            self.lbl_micro_status.setStyleSheet("font-family: 'Consolas', monospace; font-size: 11px; color: #666666;")
             
         # Update ROI Visualization Cursor
         if hasattr(self, 'roi_vis'):
@@ -735,6 +770,7 @@ class DashboardPage(QWidget):
     # ==================
 
     def cleanup(self):
+        self._ui_timer.stop()
         if self.playback_worker:
             self.playback_worker.stop()
             self.playback_worker = None
