@@ -1,2 +1,2 @@
--Train model:
--Spotting:
+- Spotting: https://github.com/mumtazharis/Spotting
+- Train model: https://github.com/mumtazharis/MER
