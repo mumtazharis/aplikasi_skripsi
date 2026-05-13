@@ -32,7 +32,7 @@ from utils.resource_path import resource_path
 # ==========================================
 # 1. KONFIGURASI & KONSTANTA
 # ==========================================
-MICRO_WEIGHTS_PATH = resource_path("models/final_mer_model_9ch_clean.pth")
+MICRO_WEIGHTS_PATH = resource_path("models/final_mer_model_9ch_test25.pth")
 MACRO_WEIGHTS_PATH = resource_path("models/macro_mobilenet_3class.pth")
 
 MICRO_CLASSES = ['Negative', 'Positive']
@@ -89,21 +89,20 @@ ROI_ORDER = [
 # 2. MICRO MODEL ARCHITECTURE
 # ==========================================
 NUM_REGIONS_MICRO = 9
-PROJECTION_DIM = 64
+PROJECTION_DIM = 32
 NUM_HEADS = 2
-TRANSFORMER_LAYERS = 1
+TRANSFORMER_LAYERS = 2
+
 
 
 class MobileNetBackbone(nn.Module):
-    def __init__(self, in_channels=1, proj_dim=PROJECTION_DIM):
+    def __init__(self, in_channels=1, proj_dim=64):
         super().__init__()
+        self.backbone = models.mobilenet_v3_small(
+            weights=models.MobileNet_V3_Small_Weights.DEFAULT
+        )
         
-        # 1. Load pre-trained MobileNetV3 Small
-        # Menggunakan weights DEFAULT (sebelumnya pretrained=True)
-        self.backbone = models.mobilenet_v3_small(weights=models.MobileNet_V3_Small_Weights.DEFAULT)
-        
-        # 2. Modifikasi layer konvolusi pertama untuk menerima 1 channel (bukan 3 channel RGB)
-        # Pada MobileNetV3, layer pertama berada di self.backbone.features[0][0]
+        # Ganti first conv DULU
         original_conv = self.backbone.features[0][0]
         self.backbone.features[0][0] = nn.Conv2d(
             in_channels, 
@@ -114,11 +113,14 @@ class MobileNetBackbone(nn.Module):
             bias=original_conv.bias is not None
         )
         
-        # 3. Modifikasi classifier (head) agar outputnya sesuai dengan PROJECTION_DIM (64)
-        # Classifier layer terakhir pada MobileNetV3 Small ada di index [3]
+        # Freeze layer 1-8 (SKIP layer 0 yang baru diganti)
+        for param in self.backbone.features[1:9].parameters():
+            param.requires_grad = False
+        
+        # Classifier head
         in_features = self.backbone.classifier[3].in_features
         self.backbone.classifier[3] = nn.Linear(in_features, proj_dim)
-        
+
 
     def forward(self, x):
         return self.backbone(x)
@@ -470,10 +472,14 @@ def extract_regions_preserved(strain_img, landmarks, img_w, img_h):
 # ==========================================
 def calculate_accumulated_flow_energy(frames_bgr, face_mesh, raft_model, device, transforms_raft,
                                        drift_decay=0.92, motion_threshold=0.05, blink_pad=3,
-                                       progress_callback=None):
+                                       progress_callback=None, initial_state=None):
     """
     Calculate accumulated flow energy for micro-expression spotting.
     progress_callback: optional callable(current, total) for progress updates.
+    initial_state: optional dict with keys 'accum_flow' and 'stationary_counter'
+                   for resuming from a previous batch (batch processing support).
+    Returns: (total_energy, cached_flows, history_per_roi, final_state)
+             final_state can be passed as initial_state to the next batch.
     """
     # Pass 1: Blinks & Landmarks
     cached_landmarks = []
@@ -505,8 +511,16 @@ def calculate_accumulated_flow_energy(frames_bgr, face_mesh, raft_model, device,
     # Pass 2: Flow Energy
     total_energy = [0]
     cached_flows = []
-    accum_flow = {name: np.array([0.0, 0.0]) for name in SPOTTER_ROI_INDICES.keys()}
-    stationary_counter = {name: 1 for name in SPOTTER_ROI_INDICES.keys()}
+
+    # Gunakan initial_state jika tersedia (carry-over dari batch sebelumnya)
+    if initial_state and 'accum_flow' in initial_state:
+        import copy
+        accum_flow = copy.deepcopy(initial_state['accum_flow'])
+        stationary_counter = copy.deepcopy(initial_state['stationary_counter'])
+    else:
+        accum_flow = {name: np.array([0.0, 0.0]) for name in SPOTTER_ROI_INDICES.keys()}
+        stationary_counter = {name: 1 for name in SPOTTER_ROI_INDICES.keys()}
+
     history_per_roi = {name: [0.0] for name in SPOTTER_ROI_INDICES.keys()
                        if name != "area_pangkal_hidung"}
 
@@ -566,7 +580,14 @@ def calculate_accumulated_flow_energy(frames_bgr, face_mesh, raft_model, device,
         if progress_callback and i % 5 == 0:
             progress_callback(i + 1, total_pairs)
 
-    return np.array(total_energy), cached_flows, history_per_roi
+    # Simpan state akhir untuk carry-over ke batch berikutnya
+    import copy
+    final_state = {
+        'accum_flow': copy.deepcopy(accum_flow),
+        'stationary_counter': copy.deepcopy(stationary_counter),
+    }
+
+    return np.array(total_energy), cached_flows, history_per_roi, final_state
 
 
 
