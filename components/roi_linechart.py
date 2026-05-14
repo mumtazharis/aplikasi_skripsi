@@ -16,7 +16,7 @@ class RoiLineChartWidget(QWidget):
         self.setMinimumSize(220, 300)
         
         # Jendela frame yang divisualisasikan dalam satu waktu
-        self.window_size = 120
+        self.window_size = 90
         
         # Daftar ROI sama dengan yang diekstrak di CSV
         self.roi_keys = [

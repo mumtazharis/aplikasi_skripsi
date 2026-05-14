@@ -359,22 +359,45 @@ def get_dominant_movement(matrix):
         return float(p5)
 
 
-def get_roi_dominant_flow(flow, landmarks, img_w, img_h):
-    """Digunakan oleh Spotter."""
+def get_roi_dominant_flow(flow, landmarks, img_w, img_h,
+                          roi_smooth_state=None, alpha_roi=0.15):
+    """Digunakan oleh Spotter.
+    roi_smooth_state: dict yang menyimpan posisi ROI ter-smooth (EMA) antar frame.
+                      Mencegah jitter boundary akibat gerakan bola mata.
+    alpha_roi: faktor EMA untuk smoothing boundary (kecil = lebih stabil).
+    """
     roi_flows = {}
     for name, indices in SPOTTER_ROI_INDICES.items():
         pts = np.array([[int(landmarks.landmark[i].x * img_w),
                          int(landmarks.landmark[i].y * img_h)] for i in indices])
 
-        x_min, y_min = np.min(pts, axis=0)
-        x_max, y_max = np.max(pts, axis=0)
+        x_min_raw = float(np.min(pts[:, 0]))
+        y_min_raw = float(np.min(pts[:, 1]))
+        x_max_raw = float(np.max(pts[:, 0]))
+        y_max_raw = float(np.max(pts[:, 1]))
 
         if name == "area_dahi":
-            roi_h = y_max - y_min
-            y_min = max(0, int(y_min - roi_h * 0.6))
+            roi_h = y_max_raw - y_min_raw
+            y_min_raw = max(0.0, y_min_raw - roi_h * 0.6)
 
-        x_min, y_min = max(0, x_min), max(0, y_min)
-        x_max, y_max = min(img_w, x_max), min(img_h, y_max)
+        # Stabilisasi boundary ROI dengan EMA temporal
+        if roi_smooth_state is not None:
+            if name not in roi_smooth_state:
+                # Frame pertama: inisialisasi langsung
+                roi_smooth_state[name] = (x_min_raw, y_min_raw, x_max_raw, y_max_raw)
+            else:
+                sx, sy, sx2, sy2 = roi_smooth_state[name]
+                x_min_raw = alpha_roi * x_min_raw + (1 - alpha_roi) * sx
+                y_min_raw = alpha_roi * y_min_raw + (1 - alpha_roi) * sy
+                x_max_raw = alpha_roi * x_max_raw + (1 - alpha_roi) * sx2
+                y_max_raw = alpha_roi * y_max_raw + (1 - alpha_roi) * sy2
+                roi_smooth_state[name] = (x_min_raw, y_min_raw, x_max_raw, y_max_raw)
+
+        # Konversi ke int dan clamp ke batas gambar
+        x_min = max(0, int(x_min_raw))
+        y_min = max(0, int(y_min_raw))
+        x_max = min(img_w, int(x_max_raw))
+        y_max = min(img_h, int(y_max_raw))
 
         crop_flow = flow[y_min:y_max, x_min:x_max]
 
@@ -517,9 +540,11 @@ def calculate_accumulated_flow_energy(frames_bgr, face_mesh, raft_model, device,
         import copy
         accum_flow = copy.deepcopy(initial_state['accum_flow'])
         stationary_counter = copy.deepcopy(initial_state['stationary_counter'])
+        roi_smooth_state = copy.deepcopy(initial_state.get('roi_smooth_state', {}))
     else:
         accum_flow = {name: np.array([0.0, 0.0]) for name in SPOTTER_ROI_INDICES.keys()}
         stationary_counter = {name: 1 for name in SPOTTER_ROI_INDICES.keys()}
+        roi_smooth_state = {}
 
     history_per_roi = {name: [0.0] for name in SPOTTER_ROI_INDICES.keys()
                        if name != "area_pangkal_hidung"}
@@ -538,7 +563,8 @@ def calculate_accumulated_flow_energy(frames_bgr, face_mesh, raft_model, device,
         instant_energy = 0
         if landmarks:
             h, w = curr_bgr.shape[:2]
-            roi_flows = get_roi_dominant_flow(flow, landmarks, w, h)
+            roi_flows = get_roi_dominant_flow(flow, landmarks, w, h,
+                                               roi_smooth_state=roi_smooth_state)
             global_du, global_dv = roi_flows.get("area_pangkal_hidung", (0.0, 0.0))
 
             roi_magnitudes = []
@@ -585,6 +611,7 @@ def calculate_accumulated_flow_energy(frames_bgr, face_mesh, raft_model, device,
     final_state = {
         'accum_flow': copy.deepcopy(accum_flow),
         'stationary_counter': copy.deepcopy(stationary_counter),
+        'roi_smooth_state': copy.deepcopy(roi_smooth_state),
     }
 
     return np.array(total_energy), cached_flows, history_per_roi, final_state

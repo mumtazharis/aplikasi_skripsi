@@ -6,6 +6,9 @@ try:
 except ImportError:
     pass
 
+os.environ["OPENCV_VIDEOIO_LOG_LEVEL"] = "0"
+os.environ["OPENCV_LOG_LEVEL"] = "ERROR"
+
 if 'pyi_splash' in sys.modules:
     pyi_splash.update_text("Loading core system framework...")
 

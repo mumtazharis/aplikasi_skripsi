@@ -48,13 +48,15 @@ class PredictionWorker(QThread):
     TARGET_FPS = 30
     BATCH_SIZE = 900     # 30 detik @30fps
     OVERLAP = 90         # 3 detik overlap antar batch
+    MAX_INPUT_DIM = 1920  # Downscale jika sisi terpanjang > 1920px (4K→1080p, hemat ~4x RAM)
 
-    def __init__(self, source_path, output_dir="results", batch_size=None):
+    def __init__(self, source_path, output_dir="results", batch_size=None, folder_fps=None):
         super().__init__()
         self.source_path = source_path
         self.output_dir = output_dir
         self.running = True
         self.is_folder = os.path.isdir(source_path)
+        self.folder_fps = folder_fps  # FPS asli folder (untuk resampling)
         if batch_size is not None:
             self.BATCH_SIZE = batch_size
 
@@ -74,7 +76,9 @@ class PredictionWorker(QThread):
             if sample is None:
                 return 0, 30, 0, 0
             h, w = sample.shape[:2]
-            return len(files), 30, w, h
+            # Gunakan folder_fps jika tersedia, default 30
+            fps = self.folder_fps if self.folder_fps else 30
+            return len(files), fps, w, h
         else:
             cap = cv2.VideoCapture(self.source_path)
             if not cap.isOpened():
@@ -96,8 +100,20 @@ class PredictionWorker(QThread):
         return sorted(raw_files, key=lambda x: int(''.join(filter(str.isdigit, x)) or 0))
 
     # ==========================================
-    # HELPER: READ FRAME BATCH
+    # HELPER: DOWNSCALE & READ FRAME BATCH
     # ==========================================
+    def _downscale_frame(self, frame):
+        """Downscale frame jika sisi terpanjang melebihi MAX_INPUT_DIM.
+        Menjaga aspect ratio. Menangani landscape maupun portrait."""
+        h, w = frame.shape[:2]
+        longer = max(h, w)
+        if longer <= self.MAX_INPUT_DIM:
+            return frame
+        scale = self.MAX_INPUT_DIM / longer
+        new_w = int(w * scale)
+        new_h = int(h * scale)
+        return cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
     def _read_frame_batch_from_video(self, cap, start_frame, count, source_fps):
         """Baca sejumlah frame dari video mulai posisi tertentu.
         Handle resampling jika FPS berbeda dari TARGET_FPS.
@@ -119,7 +135,53 @@ class PredictionWorker(QThread):
                 ret, frame = cap.read()
                 if not ret:
                     break
-                raw_frames.append(frame)
+                raw_frames.append(self._downscale_frame(frame))
+
+            # Resample ke target fps
+            frames = []
+            for i in range(count):
+                if not self.running:
+                    return frames
+                source_idx = int(i * source_fps / self.TARGET_FPS)
+                source_idx = min(source_idx, len(raw_frames) - 1)
+                if source_idx < 0 or source_idx >= len(raw_frames):
+                    break
+                frames.append(raw_frames[source_idx])  # sudah di-downscale saat baca
+            return frames
+        else:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+            frames = []
+            for _ in range(count):
+                if not self.running:
+                    return frames
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                frames.append(self._downscale_frame(frame))
+            return frames
+
+    def _read_frame_batch_from_folder(self, files, start_idx, count, source_fps=None):
+        """Baca sejumlah frame dari folder mulai index tertentu.
+        Handle resampling jika source_fps berbeda dari TARGET_FPS.
+        """
+        needs_resample = source_fps is not None and abs(source_fps - self.TARGET_FPS) >= 0.5
+
+        if needs_resample:
+            # Hitung range frame sumber yang dibutuhkan
+            src_start = int(start_idx * source_fps / self.TARGET_FPS)
+            src_end = int((start_idx + count) * source_fps / self.TARGET_FPS) + 1
+            src_end = min(src_end, len(files))
+            src_count = src_end - src_start
+
+            # Baca frame mentah dari folder
+            raw_frames = []
+            for i in range(src_start, src_end):
+                if not self.running:
+                    return []
+                filepath = os.path.join(self.source_path, files[i])
+                img = cv2.imread(filepath)
+                if img is not None:
+                    raw_frames.append(self._downscale_frame(img))
 
             # Resample ke target fps
             frames = []
@@ -133,29 +195,16 @@ class PredictionWorker(QThread):
                 frames.append(raw_frames[source_idx])
             return frames
         else:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
             frames = []
-            for _ in range(count):
+            end_idx = min(start_idx + count, len(files))
+            for i in range(start_idx, end_idx):
                 if not self.running:
                     return frames
-                ret, frame = cap.read()
-                if not ret:
-                    break
-                frames.append(frame)
+                filepath = os.path.join(self.source_path, files[i])
+                img = cv2.imread(filepath)
+                if img is not None:
+                    frames.append(self._downscale_frame(img))
             return frames
-
-    def _read_frame_batch_from_folder(self, files, start_idx, count):
-        """Baca sejumlah frame dari folder mulai index tertentu."""
-        frames = []
-        end_idx = min(start_idx + count, len(files))
-        for i in range(start_idx, end_idx):
-            if not self.running:
-                return frames
-            filepath = os.path.join(self.source_path, files[i])
-            img = cv2.imread(filepath)
-            if img is not None:
-                frames.append(img)
-        return frames
 
     # ==========================================
     # MAIN RUN — BATCH PROCESSING
@@ -192,7 +241,7 @@ class PredictionWorker(QThread):
                 return
 
             # Hitung total frame setelah resampling
-            needs_resample = not self.is_folder and abs(source_fps - self.TARGET_FPS) >= 0.5
+            needs_resample = abs(source_fps - self.TARGET_FPS) >= 0.5
             if needs_resample:
                 duration_sec = total_raw_frames / source_fps
                 total_frames = int(duration_sec * self.TARGET_FPS)
@@ -286,7 +335,7 @@ class PredictionWorker(QThread):
                 # ---- BACA FRAME BATCH ----
                 if self.is_folder:
                     raw_batch = self._read_frame_batch_from_folder(
-                        folder_files, read_start, read_count
+                        folder_files, read_start, read_count, source_fps
                     )
                 else:
                     raw_batch = self._read_frame_batch_from_video(

@@ -1,7 +1,8 @@
 import os
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QFileDialog, QProgressBar, QStackedWidget, QSizePolicy
+    QFrame, QFileDialog, QProgressBar, QStackedWidget, QSizePolicy,
+    QInputDialog
 )
 from PySide6.QtCore import Signal, Qt, QTimer, QSettings
 from PySide6.QtGui import QPixmap, QImage, QIcon
@@ -9,6 +10,7 @@ import cv2
 import time
 
 from components.record_dialog import RecordDialog
+from components.video_player import VideoPlayer
 from workers.prediction_worker import PredictionWorker
 from utils.resource_path import resource_path
 
@@ -25,8 +27,10 @@ class InputPage(QWidget):
         super().__init__()
         self.source_path = None
         self.source_type = None
+        self.folder_fps = None
         self.prediction_worker = None
         self.record_widget = None
+        self.video_player = None
         
         self.start_timer = 0
         self.timer = QTimer(self)
@@ -86,6 +90,7 @@ class InputPage(QWidget):
         page.setStyleSheet("background-color: #1a1a1a; border: none;")
         layout = QVBoxLayout(page)
         layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
 
         # Source info header
         self.source_info_header = QLabel("")
@@ -98,19 +103,9 @@ class InputPage(QWidget):
         """)
         layout.addWidget(self.source_info_header)
 
-        # Thumbnail preview
-        self.preview_thumb = QLabel("Preview")
-        self.preview_thumb.setAlignment(Qt.AlignCenter)
-        self.preview_thumb.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.preview_thumb.setStyleSheet("""
-            background-color: #1a1a1a;
-            color: #555555;
-            font-family: 'Segoe UI', 'Roboto', sans-serif;
-            font-size: 14px;
-            font-weight: 600;
-            border: none;
-        """)
-        layout.addWidget(self.preview_thumb, 1)
+        # Video player
+        self.video_player = VideoPlayer()
+        layout.addWidget(self.video_player, 1)
 
         return page
 
@@ -333,6 +328,18 @@ class InputPage(QWidget):
         )
         if path:
             settings.setValue("last_input_dir", path)
+
+            # Minta pengguna memasukkan FPS asli dari frame folder
+            fps_val, ok = QInputDialog.getDouble(
+                self, "Input FPS",
+                "Masukkan FPS asli dari frame folder ini:\n"
+                "(Frame akan di-resample ke 30 FPS untuk prediksi)",
+                30.0, 1.0, 240.0, 1
+            )
+            if not ok:
+                return
+            self.folder_fps = fps_val
+
             self.set_source(path, "folder")
 
     def set_source(self, path, source_type):
@@ -360,13 +367,9 @@ class InputPage(QWidget):
                 self.source_info_header.setText(
                     f"Video: {name}  |  {w}x{h}  |  {total} frames  |  {duration:.1f}s"
                 )
-
-                ret, frame = cap.read()
-                if ret:
-                    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    self._show_thumbnail(frame_rgb)
-
                 cap.release()
+
+                self.video_player.load_video(path)
             else:
                 self.lbl_source_detail.setText("Details: Failed to open video")
         else:
@@ -377,19 +380,14 @@ class InputPage(QWidget):
 
             self.lbl_source_detail.setText(
                 f"Type:              Frame Folder\n"
+                f"FPS:               {self.folder_fps:.1f}\n"
                 f"Total Frames:  {total}"
             )
             self.source_info_header.setText(
-                f"Folder: {name}  |  {total} frame images"
+                f"Folder: {name}  |  {self.folder_fps:.1f} fps  |  {total} frame images"
             )
 
-            if files:
-                files.sort()
-                first = os.path.join(path, files[0])
-                img = cv2.imread(first)
-                if img is not None:
-                    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                    self._show_thumbnail(img_rgb)
+            self.video_player.load_folder(path)
 
         self.left_stack.setCurrentIndex(1)
         self.btn_start_predict.setEnabled(True)
@@ -397,18 +395,7 @@ class InputPage(QWidget):
         self.lbl_status.setText("")
         self.lbl_time_elapsed.setVisible(False)
 
-    def _show_thumbnail(self, frame_rgb):
-        h, w, ch = frame_rgb.shape
-        bpl = ch * w
-        image = QImage(frame_rgb.data, w, h, bpl, QImage.Format_RGB888)
-        pixmap = QPixmap.fromImage(image)
 
-        scaled = pixmap.scaled(
-            self.preview_thumb.size(),
-            Qt.KeepAspectRatio,
-            Qt.SmoothTransformation
-        )
-        self.preview_thumb.setPixmap(scaled)
 
     # ==================
     # PREDICTION
@@ -437,6 +424,10 @@ class InputPage(QWidget):
         self.btn_import_video.setEnabled(False)
         self.btn_import_folder.setEnabled(False)
 
+        # Pause player untuk melepas file handle
+        if self.video_player:
+            self.video_player.pause()
+
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
         
@@ -445,7 +436,9 @@ class InputPage(QWidget):
         self.start_timer = time.time()
         self.timer.start(1000)
 
-        self.prediction_worker = PredictionWorker(self.source_path, output_dir=output_dir)
+        self.prediction_worker = PredictionWorker(
+            self.source_path, output_dir=output_dir, folder_fps=self.folder_fps
+        )
         self.prediction_worker.progress.connect(self._on_progress)
         self.prediction_worker.status.connect(self._on_status)
         self.prediction_worker.finished.connect(self._on_prediction_done)
@@ -508,3 +501,5 @@ class InputPage(QWidget):
             self.prediction_worker.wait()
         if self.record_widget:
             self.record_widget.cleanup()
+        if self.video_player:
+            self.video_player.cleanup()
