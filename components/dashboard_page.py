@@ -49,7 +49,7 @@ class DashboardPage(QWidget):
         left_layout.setSpacing(0)
 
         # Video display
-        self.video_label = QLabel("Load a CSV file to begin")
+        self.video_label = QLabel("Load a result file to begin")
         self.video_label.setAlignment(Qt.AlignCenter)
         self.video_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.video_label.setStyleSheet("""
@@ -634,9 +634,9 @@ class DashboardPage(QWidget):
         self.seek_slider.blockSignals(False)
         self._update_current_prediction(frame_idx)
 
-    def _on_playback_frame(self, frame_rgb, frame_idx):
+    def _on_playback_frame(self, frame_qimg, frame_idx):
         """Dipanggil dari worker thread setiap frame. Hanya buffer, tidak langsung render."""
-        self._pending_frame = (frame_rgb, frame_idx)
+        self._pending_frame = (frame_qimg, frame_idx)
 
     def _flush_pending_frame(self):
         """Dipanggil oleh QTimer ~15 FPS. Render frame terbaru ke UI."""
@@ -645,18 +645,14 @@ class DashboardPage(QWidget):
             return
         self._pending_frame = None
 
-        frame_rgb, frame_idx = pending
+        frame_qimg, frame_idx = pending
 
         # Update display size untuk pre-scaling (jika window di-resize)
         if self.playback_worker:
             lbl_size = self.video_label.size()
             self.playback_worker.set_display_size(lbl_size.width(), lbl_size.height())
 
-        h, w, ch = frame_rgb.shape
-        bpl = ch * w
-        # .copy() untuk memastikan buffer aman setelah frame_rgb di-GC
-        image = QImage(frame_rgb.data, w, h, bpl, QImage.Format_RGB888).copy()
-        pixmap = QPixmap.fromImage(image)
+        pixmap = QPixmap.fromImage(frame_qimg)
 
         # Frame sudah pre-scaled di worker, langsung tampilkan
         self.video_label.setPixmap(pixmap)

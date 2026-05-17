@@ -351,8 +351,8 @@ def compute_optical_flow(prev_bgr, curr_bgr, raft_model, device, transforms_raft
 def get_dominant_movement(matrix):
     if matrix.size == 0:
         return 0.0
-    p95 = np.percentile(matrix, 95)
-    p5 = np.percentile(matrix, 5)
+    p95 = np.percentile(matrix, 98)
+    p5 = np.percentile(matrix, 2)
     if abs(p95) > abs(p5):
         return float(p95)
     else:
@@ -548,7 +548,8 @@ def calculate_accumulated_flow_energy(frames_bgr, face_mesh, raft_model, device,
 
     history_per_roi = {name: [0.0] for name in SPOTTER_ROI_INDICES.keys()
                        if name != "area_pangkal_hidung"}
-
+    history_per_roi["area_mulut_pipi_kanan"] = [0.0]
+    history_per_roi["area_mulut_pipi_kiri"] = [0.0]
     total_pairs = len(frames_bgr) - 1
     for i in range(total_pairs):
         prev_bgr = frames_bgr[i]
@@ -595,7 +596,11 @@ def calculate_accumulated_flow_energy(frames_bgr, face_mesh, raft_model, device,
                 mag = np.linalg.norm(accum_flow[name])
                 roi_magnitudes.append(mag)
                 history_per_roi[name].append(mag)
-
+            mag_gabungan_kanan = history_per_roi["area_mulut_kanan"][-1] + history_per_roi["area_pipi_kanan"][-1]
+            mag_gabungan_kiri = history_per_roi["area_mulut_kiri"][-1] + history_per_roi["area_pipi_kiri"][-1]
+            
+            history_per_roi["area_mulut_pipi_kanan"].append(mag_gabungan_kanan)
+            history_per_roi["area_mulut_pipi_kiri"].append(mag_gabungan_kiri)
             instant_energy = np.sum(roi_magnitudes)
         else:
             for name in history_per_roi:
@@ -618,7 +623,7 @@ def calculate_accumulated_flow_energy(frames_bgr, face_mesh, raft_model, device,
 
 
 
-def detect_multiple_expressions_raw(magnitudes, fps=30, min_prominence=0.6, min_height=0.8, window_sec=1.0):
+def detect_multiple_expressions_raw(magnitudes, fps=30, min_prominence=0.6, min_height=0.8, max_height=6.0,window_sec=1.0):
     """
     min_prominence: Seberapa menonjol minimal sebuah puncak dari kakinya.
     min_height: Ketinggian absolut minimal agar tidak menangkap noise di ROI datar.
@@ -641,6 +646,12 @@ def detect_multiple_expressions_raw(magnitudes, fps=30, min_prominence=0.6, min_
     # Gunakan np.maximum (bukan built-in max) karena kita membandingkan Array dengan Scalar
     optimal_prominence = np.maximum((local_p95 - local_median) * 0.5, min_prominence)
     optimal_height = np.maximum(local_p95 * 0.5, min_height)
+    
+    # Jika max_height diberikan, gunakan format tuple (min_height_array, max_height)
+    if max_height is not None:
+        peak_height = (optimal_height, max_height)
+    else:
+        peak_height = optimal_height
 
     # 3. Syarat Lebar (Width)
     min_width = max(int(fps * 0.1), 3) 
@@ -650,7 +661,7 @@ def detect_multiple_expressions_raw(magnitudes, fps=30, min_prominence=0.6, min_
         raw_mag, 
         distance=max(int(fps/5), 6),
         prominence=optimal_prominence,
-        height=optimal_height,
+        height=peak_height,
         width=min_width 
     )
 

@@ -13,6 +13,7 @@ from components.record_dialog import RecordDialog
 from components.video_player import VideoPlayer
 from workers.prediction_worker import PredictionWorker
 from utils.resource_path import resource_path
+from components.range_slider import RangeSlider
 
 
 class InputPage(QWidget):
@@ -181,6 +182,20 @@ class InputPage(QWidget):
 
         self._add_separator(layout)
 
+        # Frame Range
+        self._add_section_title(layout, "FRAME RANGE")
+        self.lbl_frame_range = QLabel("Range: All frames")
+        self.lbl_frame_range.setStyleSheet("color: #a0a0a0; font-family: 'Consolas', monospace; font-size: 11px;")
+        self.lbl_frame_range.setVisible(False)
+        layout.addWidget(self.lbl_frame_range)
+
+        self.range_slider = RangeSlider()
+        self.range_slider.setVisible(False)
+        self.range_slider.rangeChanged.connect(self._on_range_changed)
+        layout.addWidget(self.range_slider)
+
+        self._add_separator(layout)
+
         # Prediction section
         self._add_section_title(layout, "PREDICTION")
 
@@ -278,6 +293,9 @@ class InputPage(QWidget):
         """)
         layout.addWidget(lbl)
 
+    def _on_range_changed(self, low, high):
+        self.lbl_frame_range.setText(f"Range: {low} - {high}")
+
     # ==================
     # SOURCE ACTIONS
     # ==================
@@ -369,6 +387,14 @@ class InputPage(QWidget):
                 )
                 cap.release()
 
+                self.range_slider.setMinimum(0)
+                self.range_slider.setMaximum(total)
+                self.range_slider.setLow(0)
+                self.range_slider.setHigh(total)
+                self.range_slider.setVisible(True)
+                self.lbl_frame_range.setText(f"Range: 0 - {total}")
+                self.lbl_frame_range.setVisible(True)
+
                 self.video_player.load_video(path)
             else:
                 self.lbl_source_detail.setText("Details: Failed to open video")
@@ -386,6 +412,14 @@ class InputPage(QWidget):
             self.source_info_header.setText(
                 f"Folder: {name}  |  {self.folder_fps:.1f} fps  |  {total} frame images"
             )
+
+            self.range_slider.setMinimum(0)
+            self.range_slider.setMaximum(total)
+            self.range_slider.setLow(0)
+            self.range_slider.setHigh(total)
+            self.range_slider.setVisible(True)
+            self.lbl_frame_range.setText(f"Range: 0 - {total}")
+            self.lbl_frame_range.setVisible(True)
 
             self.video_player.load_folder(path)
 
@@ -423,6 +457,7 @@ class InputPage(QWidget):
         self.btn_record.setEnabled(False)
         self.btn_import_video.setEnabled(False)
         self.btn_import_folder.setEnabled(False)
+        self.range_slider.setEnabled(False)
 
         # Pause player untuk melepas file handle
         if self.video_player:
@@ -436,8 +471,11 @@ class InputPage(QWidget):
         self.start_timer = time.time()
         self.timer.start(1000)
 
+        low, high = self.range_slider.getRange()
+
         self.prediction_worker = PredictionWorker(
-            self.source_path, output_dir=output_dir, folder_fps=self.folder_fps
+            self.source_path, output_dir=output_dir, folder_fps=self.folder_fps,
+            start_frame=low, end_frame=high
         )
         self.prediction_worker.progress.connect(self._on_progress)
         self.prediction_worker.status.connect(self._on_status)
@@ -493,6 +531,7 @@ class InputPage(QWidget):
         self.btn_record.setEnabled(True)
         self.btn_import_video.setEnabled(True)
         self.btn_import_folder.setEnabled(True)
+        self.range_slider.setEnabled(True)
         self.progress_bar.setVisible(False)
 
     def cleanup(self):

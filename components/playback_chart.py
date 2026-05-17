@@ -196,8 +196,9 @@ class PlaybackChart(QWidget):
 
         painter = QPainter(self)
 
-        # 1. Blit cached chart body (sangat cepat — GPU accelerated)
-        painter.drawPixmap(0, 0, self._chart_pixmap)
+        # 1. Blit cached chart body HANYA pada area yang butuh di-repaint (sangat cepat)
+        rect = event.rect()
+        painter.drawPixmap(rect.topLeft(), self._chart_pixmap, rect)
 
         # 2. Draw cursor on top (ringan — hanya 1 garis + segitiga + teks)
         if self.macro_data and self.total_frames > 0:

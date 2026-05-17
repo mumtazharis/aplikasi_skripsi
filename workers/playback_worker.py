@@ -6,6 +6,7 @@ import threading
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from PySide6.QtCore import QThread, Signal, QMutex
+from PySide6.QtGui import QImage
 import numpy as np
 
 
@@ -131,7 +132,7 @@ class PlaybackWorker(QThread):
     Mendukung play/pause, seek, dan speed control.
     Menggunakan FrameCache (multi-threaded) untuk folder source.
     """
-    frame_ready = Signal(np.ndarray, int)   # (frame_rgb, frame_index)
+    frame_ready = Signal(QImage, int)   # (frame_qimage, frame_index)
     playback_finished = Signal()
     error = Signal(str)
 
@@ -214,16 +215,20 @@ class PlaybackWorker(QThread):
     def pause(self):
         self.mutex.lock()
         self.playing = False
+        self._start_time = None
         self.mutex.unlock()
 
     def toggle_play(self):
         self.mutex.lock()
         self.playing = not self.playing
+        if not self.playing:
+            self._start_time = None
         self.mutex.unlock()
 
     def stop(self):
         self.running = False
         self.playing = False
+        self._start_time = None
         if self.frame_cache:
             self.frame_cache.stop()
         self.wait()
@@ -243,6 +248,8 @@ class PlaybackWorker(QThread):
             # Handle seek
             if seek_target >= 0:
                 self.current_frame_idx = seek_target
+                self._start_time = None  # Reset timing saat seek
+                
                 if not self.is_folder and self.cap:
                     self.cap.set(cv2.CAP_PROP_POS_FRAMES, seek_target)
 
@@ -253,7 +260,9 @@ class PlaybackWorker(QThread):
 
                 frame = self._read_frame_at(self.current_frame_idx)
                 if frame is not None:
-                    self.frame_ready.emit(frame, self.current_frame_idx)
+                    h, w, ch = frame.shape
+                    qimg = QImage(frame.data, w, h, ch * w, QImage.Format_RGB888).copy()
+                    self.frame_ready.emit(qimg, self.current_frame_idx)
 
             # Handle playback
             if is_playing:
@@ -265,12 +274,30 @@ class PlaybackWorker(QThread):
                     self.msleep(50)
                     continue
 
-                # Timing: catat waktu sebelum baca frame
-                t_start = time.perf_counter()
+                if getattr(self, '_start_time', None) is None:
+                    self._start_time = time.perf_counter()
+                    self._start_frame = self.current_frame_idx
+
+                # Calculate target frame based on real elapsed time
+                elapsed = time.perf_counter() - self._start_time
+                target_frame = self._start_frame + int(elapsed * self.fps * speed)
+
+                if target_frame >= self.total_frames:
+                    target_frame = self.total_frames - 1
+
+                if self.current_frame_idx < target_frame:
+                    # We are behind! Skip frames to maintain real-time speed (mencegah slowmo)
+                    self.current_frame_idx = target_frame
+                elif self.current_frame_idx > target_frame:
+                    # We are ahead, sleep a bit
+                    sleep_ms = int((self.current_frame_idx - target_frame) * 1000.0 / (self.fps * speed))
+                    self.msleep(sleep_ms)
 
                 frame = self._read_frame_at(self.current_frame_idx)
                 if frame is not None:
-                    self.frame_ready.emit(frame, self.current_frame_idx)
+                    h, w, ch = frame.shape
+                    qimg = QImage(frame.data, w, h, ch * w, QImage.Format_RGB888).copy()
+                    self.frame_ready.emit(qimg, self.current_frame_idx)
 
                 self.current_frame_idx += 1
 
@@ -279,14 +306,6 @@ class PlaybackWorker(QThread):
                     if self.current_frame_idx - last_preload_idx >= 30:
                         self.frame_cache.preload_range(self.current_frame_idx, 100)
                         last_preload_idx = self.current_frame_idx
-
-                # Frame timing: kompensasi waktu baca
-                target_delay_ms = (1000.0 / self.fps) / speed
-                elapsed_ms = (time.perf_counter() - t_start) * 1000
-                remaining_ms = target_delay_ms - elapsed_ms
-
-                if remaining_ms > 1:
-                    self.msleep(int(remaining_ms))
             else:
                 # Tidak playing, sleep untuk hemat CPU
                 self.msleep(50)

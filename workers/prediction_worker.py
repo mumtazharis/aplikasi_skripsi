@@ -50,13 +50,15 @@ class PredictionWorker(QThread):
     OVERLAP = 90         # 3 detik overlap antar batch
     MAX_INPUT_DIM = 1920  # Downscale jika sisi terpanjang > 1920px (4K→1080p, hemat ~4x RAM)
 
-    def __init__(self, source_path, output_dir="results", batch_size=None, folder_fps=None):
+    def __init__(self, source_path, output_dir="results", batch_size=None, folder_fps=None, start_frame=0, end_frame=None):
         super().__init__()
         self.source_path = source_path
         self.output_dir = output_dir
         self.running = True
         self.is_folder = os.path.isdir(source_path)
         self.folder_fps = folder_fps  # FPS asli folder (untuk resampling)
+        self.start_frame = start_frame
+        self.end_frame = end_frame
         if batch_size is not None:
             self.BATCH_SIZE = batch_size
 
@@ -123,9 +125,13 @@ class PredictionWorker(QThread):
         if needs_resample:
             # Hitung range frame sumber yang dibutuhkan
             # start_frame dan count sudah dalam target fps space
-            src_start = int(start_frame * source_fps / self.TARGET_FPS)
-            src_end = int((start_frame + count) * source_fps / self.TARGET_FPS) + 1
-            src_count = src_end - src_start
+            src_start = self.start_frame + int(start_frame * source_fps / self.TARGET_FPS)
+            src_end = self.start_frame + int((start_frame + count) * source_fps / self.TARGET_FPS) + 1
+            src_end = min(src_end, self.end_frame)
+            src_count = max(0, src_end - src_start)
+
+            if src_count <= 0:
+                return []
 
             cap.set(cv2.CAP_PROP_POS_FRAMES, src_start)
             raw_frames = []
@@ -149,9 +155,14 @@ class PredictionWorker(QThread):
                 frames.append(raw_frames[source_idx])  # sudah di-downscale saat baca
             return frames
         else:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+            actual_start = self.start_frame + start_frame
+            actual_count = min(count, self.end_frame - actual_start)
+            if actual_count <= 0:
+                return []
+
+            cap.set(cv2.CAP_PROP_POS_FRAMES, actual_start)
             frames = []
-            for _ in range(count):
+            for _ in range(actual_count):
                 if not self.running:
                     return frames
                 ret, frame = cap.read()
@@ -168,10 +179,9 @@ class PredictionWorker(QThread):
 
         if needs_resample:
             # Hitung range frame sumber yang dibutuhkan
-            src_start = int(start_idx * source_fps / self.TARGET_FPS)
-            src_end = int((start_idx + count) * source_fps / self.TARGET_FPS) + 1
-            src_end = min(src_end, len(files))
-            src_count = src_end - src_start
+            src_start = self.start_frame + int(start_idx * source_fps / self.TARGET_FPS)
+            src_end = self.start_frame + int((start_idx + count) * source_fps / self.TARGET_FPS) + 1
+            src_end = min(src_end, self.end_frame, len(files))
 
             # Baca frame mentah dari folder
             raw_frames = []
@@ -196,8 +206,9 @@ class PredictionWorker(QThread):
             return frames
         else:
             frames = []
-            end_idx = min(start_idx + count, len(files))
-            for i in range(start_idx, end_idx):
+            actual_start = self.start_frame + start_idx
+            actual_end = min(actual_start + count, self.end_frame, len(files))
+            for i in range(actual_start, actual_end):
                 if not self.running:
                     return frames
                 filepath = os.path.join(self.source_path, files[i])
@@ -240,18 +251,28 @@ class PredictionWorker(QThread):
                 self.error.emit("Tidak ada frame yang bisa dibaca.")
                 return
 
+            if self.end_frame is None or self.end_frame > total_raw_frames:
+                self.end_frame = total_raw_frames
+            if self.start_frame < 0:
+                self.start_frame = 0
+
+            actual_raw_frames = self.end_frame - self.start_frame
+            if actual_raw_frames <= 0:
+                self.error.emit("Range frame tidak valid.")
+                return
+
             # Hitung total frame setelah resampling
             needs_resample = abs(source_fps - self.TARGET_FPS) >= 0.5
             if needs_resample:
-                duration_sec = total_raw_frames / source_fps
+                duration_sec = actual_raw_frames / source_fps
                 total_frames = int(duration_sec * self.TARGET_FPS)
                 self.status.emit(
-                    f"Video: {total_raw_frames} frame @ {source_fps:.1f}fps "
+                    f"Video: {actual_raw_frames} frame ({self.start_frame}-{self.end_frame}) @ {source_fps:.1f}fps "
                     f"→ resample ke {total_frames} frame @ {self.TARGET_FPS}fps"
                 )
             else:
-                total_frames = total_raw_frames
-                self.status.emit(f"Total: {total_frames} frame @ {source_fps:.1f}fps")
+                total_frames = actual_raw_frames
+                self.status.emit(f"Total: {total_frames} frame ({self.start_frame}-{self.end_frame}) @ {source_fps:.1f}fps")
 
             fps_val = self.TARGET_FPS if needs_resample else source_fps
 

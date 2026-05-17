@@ -16,7 +16,7 @@ class RoiLineChartWidget(QWidget):
         self.setMinimumSize(220, 300)
         
         # Jendela frame yang divisualisasikan dalam satu waktu
-        self.window_size = 90
+        self.window_size = 150
         
         # Daftar ROI sama dengan yang diekstrak di CSV
         self.roi_keys = [
@@ -163,50 +163,7 @@ class RoiLineChartWidget(QWidget):
         if window_range <= 0:
             return
         
-        # Rebuild chart pixmap if dirty or size changed
-        if (self._chart_dirty or 
-            self._chart_pixmap is None or 
-            self._chart_pixmap.size() != self.size()):
-            self._rebuild_chart_pixmap(w, h, global_h, region_h, x_min, x_max, window_range)
-            self._cached_x_min = x_min
-            self._cached_x_max = x_max
-            self._chart_dirty = False
-
-        # 1. Blit cached chart body (sangat cepat)
-        painter.drawPixmap(0, 0, self._chart_pixmap)
-        
-        # 2. Draw cursor lines on top (ringan)
-        padding = 4
-        plot_w = w - (padding * 2)
-        plot_x = padding
-        cursor_rel_idx = self.current_frame - x_min
-        
-        if 0 <= cursor_rel_idx <= window_range:
-            cursor_px = plot_x + (cursor_rel_idx / window_range) * plot_w
-            pen_cursor = QPen(self._cursor_color, 1)
-            pen_cursor.setStyle(Qt.DashLine)
-            painter.setPen(pen_cursor)
-            
-            # Cursor pada global chart
-            plot_y_g = 18
-            plot_h_g = global_h - 22
-            painter.drawLine(int(cursor_px), plot_y_g, int(cursor_px), plot_y_g + plot_h_g)
-            
-            # Cursor pada region chart
-            plot_y_r = global_h + 18
-            plot_h_r = region_h - 22
-            painter.drawLine(int(cursor_px), plot_y_r, int(cursor_px), plot_y_r + plot_h_r)
-
-    # ===================================================================
-    # REBUILD PIXMAP — dipanggil SEKALI saat window/size/visibility berubah
-    # ===================================================================
-
-    def _rebuild_chart_pixmap(self, w, h, global_h, region_h, x_min, x_max, window_range):
-        """Render chart body + legend ke QPixmap cache."""
-        self._chart_pixmap = QPixmap(w, h)
-        painter = QPainter(self._chart_pixmap)
-        
-        # Latar Belakang
+        # Langsung gambar ke widget tanpa QPixmap cache (lebih cepat karena bergeser tiap frame)
         painter.fillRect(0, 0, w, h, self._bg_color)
         
         padding = 4
@@ -216,7 +173,6 @@ class RoiLineChartWidget(QWidget):
         # --- 1. GLOBAL CHART ---
         plot_h_g = global_h - 22
         plot_y_g = 18
-        
         self._draw_chart_to_painter(
             painter, plot_x, 0, plot_w, global_h, plot_y_g, plot_h_g,
             "GLOBAL MOTION",
@@ -230,10 +186,8 @@ class RoiLineChartWidget(QWidget):
         # --- 2. REGION CHART ---
         plot_h_r = region_h - 22
         plot_y_r = global_h + 18
-        
         region_slices = [self.history[k][int(x_min):int(x_max)] for k in self.roi_keys]
         region_visible = [self.visible_lines[k] for k in self.roi_keys]
-        
         self._draw_chart_to_painter(
             painter, plot_x, global_h, plot_w, region_h, plot_y_r, plot_h_r,
             "REGION MOTION",
@@ -245,10 +199,18 @@ class RoiLineChartWidget(QWidget):
         )
         
         # --- 3. LEGEND ---
-        legend_h = 85
         self._draw_legend(painter, 0, h - legend_h, w, legend_h)
         
-        painter.end()
+        # --- 4. DRAW CURSOR ---
+        cursor_rel_idx = self.current_frame - x_min
+        if 0 <= cursor_rel_idx <= window_range:
+            cursor_px = plot_x + (cursor_rel_idx / window_range) * plot_w
+            pen_cursor = QPen(self._cursor_color, 1)
+            pen_cursor.setStyle(Qt.DashLine)
+            painter.setPen(pen_cursor)
+            
+            painter.drawLine(int(cursor_px), plot_y_g, int(cursor_px), plot_y_g + plot_h_g)
+            painter.drawLine(int(cursor_px), plot_y_r, int(cursor_px), plot_y_r + plot_h_r)
 
     def _draw_chart_to_painter(self, painter, plot_x, y_offset, plot_w, h_chart, 
                                 plot_y, plot_h, title, data_slices, colors, max_y, 
